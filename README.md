@@ -41,6 +41,70 @@ Fork the repository and follow **[Build Your Own Kernel](docs/build-from-fork.md
 
 ---
 
+## Local Builds (`trustgki`)
+
+`src/main.rs` is a standalone Rust program that reproduces the whole GitHub Actions
+build path — `build.yml` plus every composite action it calls — for one fixed
+feature set: **GKI + LXC (Droidspaces-OSS) + KernelSU-Next + SUSFS**.
+
+It needs `git`, `patch`, `curl`, `timeout` and `clang` on `PATH`; the Android
+kernel sources (~10 GB) are fetched with `repo` exactly like CI does.
+
+```sh
+# Show the build matrix a family expands to (mirrors prepare.yml)
+cargo run --release -- list --version android16-6.12
+
+# Build one target: 6.12.x-android16, 2026-06 patch level, sublevel 81
+cargo run --release -- build \
+    --version android16-6.12 --os-patch-level 2026-06 --sublevel 81 \
+    --output-dir ./out
+
+# Build every target in a config (including the lts tip)
+cargo run --release -- build --config .github/config/android15-6.6.json
+```
+
+The result is `AnyKernel3/Image` (packaged as `<name>-AnyKernel3.zip`) plus a
+build summary and `-metadata.json` in the output directory.
+
+### What the program reproduces
+
+| Stage | Source action | Notes |
+|-------|---------------|-------|
+| Environment, `kernel_patches`, `AnyKernel3` | `setup-build-environment` | `repo` launcher downloaded per run |
+| `repo init`/`sync`, deprecated-branch rewrite | `download-kernel` | 3 attempts, 15-minute sync timeout |
+| Deterministic clock | inline in `build.yml` | `SOURCE_DATE_EPOCH` = patch-level day 5, 04:20 UTC |
+| Sublevel + file name | `extract-sublevel-file-name` | `lts`/`X` reads `SUBLEVEL` from the Makefile |
+| Kernel fixes | `kernel-fixes` | glibc ≥ 2.38 Makefile/parse-options, 6.6 namespace include, `VM_PAD_MASK` |
+| Root implementation | `root-setup` | KernelSU-Next at a pinned SHA, `drivers/kernelsu` symlink, `CONFIG_KSU=y` |
+| SUSFS | `susfs`, `susfs-setup`, `susfs-config`, `susfs-patches`, `susfs-revert-patches` | branch `gki-<family>`, integration patch, per-sublevel fake patches + reverts, `show_pad` |
+| `selinux_hide.c` | inline in `build.yml` | pointer-bool-conversion and `static` stripping |
+| LXC container runtime | `droidspaces` | SysV IPC/POSIX-mqueue kABI patches, 6.12 IPC symbol exports, namespace configs |
+| Root hiding extras | `ptrace`, `unicode-fix` | ptrace leak fix (<5.16), unicode bypass fix |
+| Misc options | `misc` | OverlayFS, TMPFS xattr/POSIX ACL, KALLSYMS |
+| Device patches | `apply-device-patches` | Samsung `min_kdp` (+`.stg` fallback) and Xiaomi symbol list on 6.6 |
+| Branding, ABI, dirty flags | `apply-kernel-branding`, `remove-protected-exports`, `clean-kernel-flags` | |
+| Build + artifact | `build-kernel` | `build/build.sh` or Kleaf/Bazel, `Image` copied into `AnyKernel3` |
+
+Version-conditional work is driven entirely by the family (`android12-5.10`
+… `android16-6.12`) and the resolved sublevel/patch level, so no per-version
+patch, kernel option or fix from the actions is skipped. `--strict-patches`
+turns missing optional upstream patches into hard failures.
+
+Features outside the requested scope — NoMount, Baseband Guard, networking
+(WireGuard/BBRv3/CIFS/IPSet), NTSync, the BPF/BTF stack and the performance
+patch set — are deliberately not applied, and the program prints that list on
+every run.
+
+> [!NOTE]
+> Two shell quirks are implemented by intent rather than literally: the
+> `kernel-fixes` `mm/mmap.c` replacement (the original `sed` expands a bare `&`
+> into the whole match and corrupts the line) and the 6.12 SUSFS revert that
+> restores one `dma-buf.h` include instead of one copy per `#include` line.
+> GitHub-only steps (disk cleanup, swap, cache buckets, artifact/release
+> publication) are replaced with local equivalents or omitted.
+
+---
+
 ## Installation
 
 See **[Installation Guide](https://github.com/WildKernels/GKI_KernelSU_SUSFS/wiki/Installation)**.
