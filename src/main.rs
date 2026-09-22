@@ -2601,8 +2601,45 @@ fn ccache_env(ctx: &Ctx) -> Vec<(&'static str, String)> {
     ]
 }
 
+/// Turn off Kleaf's strict `savedefconfig` comparison for `kernel_aarch64`.
+///
+/// `build.yml`/`build-kernel` runs
+/// `sed -i '/name = "kernel_aarch64",/a\    check_defconfig = "disabled",'`
+/// on `common/BUILD.bazel`. The appended options this pipeline writes into
+/// `gki_defconfig` are not `savedefconfig`-minimised (most of them, e.g.
+/// `CONFIG_KSU` and the `CONFIG_KSU_SUSFS_*` set, even default to `y` and are
+/// therefore dropped from the minimised file), so Kleaf's
+/// `kernel_aarch64_config` step — which compares the two files literally —
+/// fails unless the check is disabled. Newer Kleaf (android16-6.12) supports
+/// `check_defconfig`; the older tree used by android14/15 uses a different
+/// target layout and has no such check at all.
+///
+/// Returns the rewritten file plus how many targets were patched. The
+/// attribute is never added twice, and an existing `check_defconfig` for a
+/// *different* target (e.g. `kernel_aarch64_tv`) does not suppress it.
+fn disable_check_defconfig(content: &str) -> (String, usize) {
+    let lines: Vec<&str> = content.split_inclusive('\n').collect();
+    let mut out = String::with_capacity(content.len() + 64);
+    let mut inserted = 0usize;
+    for (index, line) in lines.iter().enumerate() {
+        out.push_str(line);
+        if !line.contains("name = \"kernel_aarch64\",") {
+            continue;
+        }
+        let already_declared = lines
+            .get(index + 1)
+            .map(|next| next.trim() == "check_defconfig = \"disabled\",")
+            .unwrap_or(false);
+        if !already_declared {
+            out.push_str("    check_defconfig = \"disabled\",\n");
+            inserted += 1;
+        }
+    }
+    (out, inserted)
+}
+
 /// Build `//common:kernel_aarch64/Image` with either `build/build.sh` or Kleaf.
-fn build_kernel(ctx: &Ctx) -> Result<()> {
+fn build_kernel(ctx: &mut Ctx) -> Result<()> {
     let kernel = ctx.kernel_dir();
     let common = ctx.common_dir();
     ctx.log(format!(
@@ -2667,13 +2704,17 @@ fn build_kernel(ctx: &Ctx) -> Result<()> {
         fs::create_dir_all(&ctx.opts.bazel_cache)?;
         let build_bazel = common.join("BUILD.bazel");
         let content = read(&build_bazel)?;
-        if !content.contains("check_defconfig = \"disabled\"") {
-            let out = sed_insert_after(
-                &content,
-                "name = \"kernel_aarch64\",",
-                "    check_defconfig = \"disabled\",",
+        let (patched, inserted) = disable_check_defconfig(&content);
+        if inserted > 0 {
+            write(&build_bazel, &patched)?;
+            ctx.log(format!(
+                "check_defconfig disabled for {inserted} kernel_aarch64 target(s)"
+            ));
+        } else if content.contains("check_defconfig") {
+            ctx.note(
+                "warning: could not disable check_defconfig for kernel_aarch64 in BUILD.bazel"
+                    .to_string(),
             );
-            write(&build_bazel, &out)?;
         }
         let disk_cache = format!("--disk_cache={}", pstr(&ctx.opts.bazel_cache));
         run_with_env(
@@ -2720,6 +2761,59 @@ fn gather_artifacts(ctx: &Ctx) -> Result<PathBuf> {
         ),
         pstr(&ctx.out_dir().join("dist/Image"))
     )
+}
+
+// ---------------------------------------------------------------------------
+// Post-build verification
+// ---------------------------------------------------------------------------
+
+/// Confirm the built configuration really enables KernelSU and SUSFS.
+///
+/// The pipeline appends options to `gki_defconfig`; a symbol that the Kconfig
+/// tree cannot reach is dropped silently by `make`/Kleaf. This check surfaces
+/// that (it is a warning, not a hard failure) so a kernel can never be
+/// published as "KernelSU-Next + SUSFS" without the options actually set.
+fn verify_kernel_config(ctx: &mut Ctx) {
+    let mut configs = Vec::new();
+    for root in [
+        ctx.kernel_dir().join("out"),
+        ctx.kernel_dir().join("bazel-bin"),
+    ] {
+        if !root.is_dir() {
+            continue;
+        }
+        match find_files_named(&root, ".config") {
+            Ok(paths) => {
+                for path in paths {
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        configs.push((path, content));
+                    }
+                }
+            }
+            Err(err) => ctx.log(format!("warning: could not scan {}: {err:#}", pstr(&root))),
+        }
+    }
+    if configs.is_empty() {
+        ctx.note("kernel config check: no built .config found (skipped)");
+        return;
+    }
+    let ksu = configs
+        .iter()
+        .find(|(_, content)| content.contains("CONFIG_KSU=y"));
+    let susfs = configs
+        .iter()
+        .find(|(_, content)| content.contains("CONFIG_KSU_SUSFS=y"));
+    match (ksu, susfs) {
+        (Some((ksu_path, _)), Some(_)) => ctx.note(format!(
+            "kernel config check: CONFIG_KSU=y and CONFIG_KSU_SUSFS=y (in {})",
+            pstr(ksu_path)
+        )),
+        _ => ctx.note(format!(
+            "WARNING: kernel config check failed — CONFIG_KSU=y found: {}, CONFIG_KSU_SUSFS=y found: {}",
+            ksu.is_some(),
+            susfs.is_some()
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2982,7 +3076,8 @@ fn build_target(
     clean_kernel_flags(&ctx)?;
 
     let rejects = scan_patch_rejects(&ctx)?;
-    build_kernel(&ctx)?;
+    build_kernel(&mut ctx)?;
+    verify_kernel_config(&mut ctx);
     let image = gather_artifacts(&ctx)?;
     write_summary(&ctx, &image, rejects)?;
     Ok(())
@@ -3498,6 +3593,67 @@ kernel_build(
         let (out, notes) = strip_protected_lists(src).unwrap();
         assert_eq!(out, src);
         assert!(notes.is_empty(), "notes: {notes:?}");
+    }
+
+    /// `android16-6.12-lts:common/BUILD.bazel` declares `kernel_aarch64` with
+    /// `common_kernel(...)` and *already* disables the check for
+    /// `kernel_aarch64_tv` — which must not suppress the insertion.
+    #[test]
+    fn check_defconfig_is_disabled_for_kernel_aarch64_not_just_anywhere() {
+        let src = "common_kernel(\n    name = \"kernel_aarch64\",\n    arch = \"arm64\",\n)\n\ncommon_kernel(\n    name = \"kernel_aarch64_tv\",\n    check_defconfig = \"disabled\",\n    arch = \"arm64\",\n)\n";
+        let (out, inserted) = disable_check_defconfig(src);
+        assert_eq!(inserted, 1, "out:\n{out}");
+        assert!(
+            out.contains("    name = \"kernel_aarch64\",\n    check_defconfig = \"disabled\",\n")
+        );
+        // The tv target keeps exactly its own single declaration.
+        assert_eq!(out.matches("check_defconfig = \"disabled\",").count(), 2);
+        // Idempotent.
+        let (again, second) = disable_check_defconfig(&out);
+        assert_eq!(again, out);
+        assert_eq!(second, 0);
+    }
+
+    /// `android14-6.1-lts` builds the GKI targets through
+    /// `define_common_kernels(target_configs = {...})`: there is no
+    /// `name = "kernel_aarch64",` line and the older Kleaf has no
+    /// `check_defconfig` attribute, so nothing is inserted.
+    #[test]
+    fn check_defconfig_is_not_invented_for_define_common_kernels() {
+        let src = "define_common_kernels(target_configs = {\n    \"kernel_aarch64\": {\n        \"make_goals\": _GKI_AARCH64_MAKE_GOALS,\n    },\n})\n";
+        let (out, inserted) = disable_check_defconfig(src);
+        assert_eq!(inserted, 0);
+        assert_eq!(out, src);
+        assert!(!out.contains("check_defconfig"));
+    }
+
+    #[test]
+    fn built_config_verification_reports_ksu_and_susfs() {
+        let (mut ctx, root) = scratch_ctx(Family::Android16_6_12, "69", "2026-03");
+        let built = ctx.kernel_dir().join("out/cache/deadbeef/common/.config");
+        fs::create_dir_all(built.parent().unwrap()).unwrap();
+        fs::write(&built, "CONFIG_KSU=y\nCONFIG_KSU_SUSFS=y\n").unwrap();
+        verify_kernel_config(&mut ctx);
+        assert!(
+            ctx.notes.iter().any(|n| n.contains("CONFIG_KSU_SUSFS=y")),
+            "notes: {:?}",
+            ctx.notes
+        );
+
+        // A config without the options must be reported as a failure.
+        let (mut ctx2, root2) = scratch_ctx(Family::Android16_6_12, "69", "2026-03");
+        let built2 = ctx2.kernel_dir().join("out/cache/deadbeef/common/.config");
+        fs::create_dir_all(built2.parent().unwrap()).unwrap();
+        fs::write(&built2, "CONFIG_KSU_SUSFS=y\n").unwrap();
+        verify_kernel_config(&mut ctx2);
+        assert!(
+            ctx2.notes.iter().any(|n| n.starts_with("WARNING:")),
+            "notes: {:?}",
+            ctx2.notes
+        );
+
+        fs::remove_dir_all(root).ok();
+        fs::remove_dir_all(root2).ok();
     }
 
     /// Build a throwaway workspace that looks enough like `kernel/common`.

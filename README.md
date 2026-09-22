@@ -105,6 +105,11 @@ every run.
 > `kernel-fixes` `mm/mmap.c` replacement (the original `sed` expands a bare `&`
 > into the whole match and corrupts the line) and the 6.12 SUSFS revert that
 > restores one `dma-buf.h` include instead of one copy per `#include` line.
+> Kleaf's strict `savedefconfig` comparison is disabled for `kernel_aarch64`
+> exactly as `build-kernel` does — the options this pipeline appends to
+> `gki_defconfig` are not `savedefconfig`-minimised — and after the build the
+> program re-checks the generated `.config` for `CONFIG_KSU=y` and
+> `CONFIG_KSU_SUSFS=y`, warning if either is missing.
 > GitHub-only steps (disk cleanup, swap, cache buckets, artifact/release
 > publication) are replaced with local equivalents or omitted.
 
