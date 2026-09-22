@@ -2321,39 +2321,12 @@ fn remove_protected_exports(ctx: &mut Ctx) -> Result<()> {
     }
 
     let build_bazel = common.join("BUILD.bazel");
-    let mut bazel = read(&build_bazel)?;
-    let (bazel_out, changed) = regex_replace_all(
-        &bazel,
-        r#"(?m)^\s*"protected_exports_list"\s*:\s*"android/abi_gki_protected_exports_aarch64",\s*\n?"#,
-        "",
-    )
-    .map(|out| {
-        let changed = out != bazel;
-        (out, changed)
-    })?;
-    if changed {
-        if bazel_out.contains("\"protected_exports_list\"") {
-            bail!("protected_exports_list reference still present in common/BUILD.bazel");
-        }
-        bazel = bazel_out;
-    }
-
-    let (bazel_out, changed) = regex_replace_all(
-        &bazel,
-        r#"(?m)^\s*protected_module_names_list\s*=\s*":gki_(?:aarch64|x86_64)_protected_module_names",\s*\n?"#,
-        "",
-    )
-    .map(|out| {
-        let changed = out != bazel;
-        (out, changed)
-    })?;
-    if !changed {
-        ctx.log("warning: protected_module_names_list not present in BUILD.bazel");
-    }
-    if bazel_out.contains("protected_module_names_list") {
-        bail!("protected_module_names_list reference still present in common/BUILD.bazel");
-    }
+    let bazel = read(&build_bazel)?;
+    let (bazel_out, notes) = strip_protected_lists(&bazel)?;
     write(&build_bazel, &bazel_out)?;
+    for note in notes {
+        ctx.note(note);
+    }
 
     let modules_bzl = common.join("modules.bzl");
     if modules_bzl.is_file() {
@@ -2374,6 +2347,77 @@ fn remove_protected_exports(ctx: &mut Ctx) -> Result<()> {
     }
     ctx.note("protected exports/modules removed (bazel)");
     Ok(())
+}
+
+/// Drop the ABI protected-export and protected-module references from
+/// `common/BUILD.bazel`.
+///
+/// Mirrors `remove-protected-exports/action.yml`, with one deliberate
+/// extension: `android14-5.15` and `android14-6.1` declare
+/// `"protected_exports_list"` for **both** aarch64 and x86_64 while the action's
+/// `rm -rf common/android/abi_gki_protected_exports_*` deletes both files, so
+/// every reference to a deleted list is removed here instead of leaving a
+/// dangling bazel label behind.
+fn strip_protected_lists(bazel: &str) -> Result<(String, Vec<String>)> {
+    let mut notes = Vec::new();
+    let mut out = bazel.to_string();
+
+    let any_exports = Regex::new(
+        r#"(?m)^[ \t]*"protected_exports_list"[ \t]*:[ \t]*"android/abi_gki_protected_exports_[A-Za-z0-9_]+",[ \t]*\n?"#,
+    )?;
+    let aarch64_exports = Regex::new(
+        r#""protected_exports_list"[ \t]*:[ \t]*"android/abi_gki_protected_exports_aarch64""#,
+    )?;
+
+    if aarch64_exports.is_match(&out) {
+        let before = out.clone();
+        out = any_exports.replace_all(&out, "").into_owned();
+        if out == before {
+            bail!("common/BUILD.bazel was not modified for protected_exports_list");
+        }
+        if aarch64_exports.is_match(&out) {
+            bail!("protected_exports_list reference still present in common/BUILD.bazel");
+        }
+        notes.push("protected_exports_list entries removed (bazel)".to_string());
+    } else {
+        // No aarch64 entry: still clean up references to lists we deleted.
+        out = any_exports.replace_all(&out, "").into_owned();
+    }
+    if out.contains("\"protected_exports_list\"") {
+        notes.push(
+            "warning: common/BUILD.bazel still references a protected exports list".to_string(),
+        );
+    }
+
+    // 6.12+ spells the protected module list differently from `modules.bzl`.
+    if out.contains("protected_module_names_list") {
+        let specific = Regex::new(
+            r#"(?m)^[ \t]*protected_module_names_list[ \t]*=[ \t]*":gki_(?:aarch64|x86_64)_protected_module_names",[ \t]*\n?"#,
+        )?;
+        let before = out.clone();
+        out = specific.replace_all(&out, "").into_owned();
+        if out == before {
+            notes.push(
+                "warning: protected_module_names_list not matched in common/BUILD.bazel"
+                    .to_string(),
+            );
+        } else {
+            notes.push("protected_module_names_list entries removed (bazel)".to_string());
+        }
+        // Best effort: take out any other assignment of the same name so no
+        // reference to a removed target survives.
+        if out.contains("protected_module_names_list") {
+            let any = Regex::new(r#"(?m)^[ \t]*protected_module_names_list[ \t]*=[^\n]*\n?"#)?;
+            out = any.replace_all(&out, "").into_owned();
+        }
+        if out.contains("protected_module_names_list") {
+            notes.push(
+                "warning: common/BUILD.bazel still references protected_module_names_list"
+                    .to_string(),
+            );
+        }
+    }
+    Ok((out, notes))
 }
 
 /// Strip `-dirty` from the version stamp and commit the patched tree.
@@ -3389,6 +3433,71 @@ interface {\n  symbol_id: 0xc750a072\n}\n";
                 family.config_file().display()
             );
         }
+    }
+
+    /// Shape taken from `android14-6.1-lts:common/BUILD.bazel`, which declares
+    /// the protected exports list for aarch64 *and* x86_64.
+    #[test]
+    fn protected_exports_list_removes_every_deleted_reference() {
+        let src = r#"kernel_build(
+    name = "kernel_aarch64",
+    **{
+        "protected_exports_list": "android/abi_gki_protected_exports_aarch64",
+        "protected_modules_list": "android/gki_aarch64_protected_modules",
+    },
+    **{
+        "protected_exports_list": "android/abi_gki_protected_exports_x86_64",
+        "protected_modules_list": "android/gki_x86_64_protected_modules",
+    },
+)
+"#;
+        let (out, notes) = strip_protected_lists(src).unwrap();
+        assert!(!out.contains("protected_exports_list"));
+        assert!(!out.contains("abi_gki_protected_exports_"));
+        // protected_modules_list is untouched (modules.bzl own that check).
+        assert_eq!(out.matches("protected_modules_list").count(), 2);
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("protected_exports_list entries removed")),
+            "notes: {notes:?}"
+        );
+        // Running again is a no-op and must not fail.
+        let (again, _) = strip_protected_lists(&out).unwrap();
+        assert_eq!(again, out);
+    }
+
+    /// Shape taken from `android16-6.12-lts:common/BUILD.bazel`.
+    #[test]
+    fn protected_module_names_list_is_stripped_for_6_12() {
+        let src = r#"kernel_build(
+    name = "kernel_aarch64",
+    protected_module_names_list = ":gki_aarch64_protected_module_names",
+)
+
+kernel_build(
+    name = "kernel_aarch64_16k",
+    protected_module_names_list = ":gki_aarch64_protected_module_names",
+)
+"#;
+        let (out, notes) = strip_protected_lists(src).unwrap();
+        assert!(!out.contains("protected_module_names_list"));
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("protected_module_names_list entries removed")),
+            "notes: {notes:?}"
+        );
+        let (again, _) = strip_protected_lists(&out).unwrap();
+        assert_eq!(again, out);
+    }
+
+    #[test]
+    fn protected_lists_are_left_alone_when_absent() {
+        let src = "kernel_build(\n    name = \"kernel_aarch64\",\n)\n";
+        let (out, notes) = strip_protected_lists(src).unwrap();
+        assert_eq!(out, src);
+        assert!(notes.is_empty(), "notes: {notes:?}");
     }
 
     /// Build a throwaway workspace that looks enough like `kernel/common`.
