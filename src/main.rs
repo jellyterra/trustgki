@@ -58,8 +58,7 @@ const REPO_SUSFS: &str = "https://gitlab.com/simonpunk/susfs4ksu.git";
 const REPO_KERNEL_MANIFEST: &str = "https://android.googlesource.com/kernel/manifest";
 const REPO_KERNEL_COMMON: &str = "https://android.googlesource.com/kernel/common";
 const URL_REPO_TOOL: &str = "https://storage.googleapis.com/git-repo-downloads/repo";
-const URL_CCACHE: &str =
-    "https://github.com/WildKernels/kernel_patches/raw/refs/heads/main/ccache/ccache-x86-64";
+const URL_CCACHE: &str = "https://github.com/WildKernels/kernel_patches/raw/refs/heads/main/ccache/ccache-x86-64";
 
 const BRANCH_ANY_KERNEL3: &str = "gki-2.0";
 const BRANCH_KSU_NEXT: &str = "dev";
@@ -71,31 +70,14 @@ const SUBLEVEL_LTS: &str = "X";
 const PATCH_LEVEL_ALL: &str = "all";
 
 /// Feature flags that exist upstream but are intentionally not reproduced here.
-const OUT_OF_SCOPE: &[(&str, &str)] = &[
-    (
-        "NoMount",
-        "nomount/action.yml + nomount-metamodule/action.yml",
-    ),
-    ("Baseband Guard", "bbg/action.yml"),
-    (
-        "Networking",
-        "networking/action.yml, networking-config, cifs, bbrv3",
-    ),
-    ("NTSync", "ntsync/action.yml"),
-    ("BPF stack", "btf/action.yml, fuse-bpf/action.yml"),
-    ("Performance", "performance/action.yml"),
-];
+const OUT_OF_SCOPE: &[(&str, &str)] = &[("NoMount", "nomount/action.yml + nomount-metamodule/action.yml"), ("Baseband Guard", "bbg/action.yml"), ("Networking", "networking/action.yml, networking-config, cifs, bbrv3"), ("NTSync", "ntsync/action.yml"), ("BPF stack", "btf/action.yml, fuse-bpf/action.yml"), ("Performance", "performance/action.yml")];
 
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Parser)]
-#[command(
-    name = "trustgki",
-    about = "Build GKI + LXC (DroidSpaces) + KernelSU-Next + SUSFS kernel images",
-    version
-)]
+#[command(name = "trustgki", about = "Build GKI + LXC (DroidSpaces) + KernelSU-Next + SUSFS kernel images", version)]
 struct Cli {
     #[command(subcommand)]
     command: Command_,
@@ -149,7 +131,7 @@ struct BuildArgs {
     #[arg(long, default_value = "Normal")]
     variant: String,
     /// Branding appended to the kernel release string.
-    #[arg(long, default_value = "Wild")]
+    #[arg(long, default_value = "TrustGKI")]
     brand_name: String,
     /// Working directory that holds `kernel/`, `kernel_patches/`, `AnyKernel3/`.
     #[arg(long)]
@@ -206,15 +188,7 @@ enum Family {
 }
 
 impl Family {
-    const ALL: [Family; 7] = [
-        Family::Android12_5_10,
-        Family::Android13_5_10,
-        Family::Android13_5_15,
-        Family::Android14_5_15,
-        Family::Android14_6_1,
-        Family::Android15_6_6,
-        Family::Android16_6_12,
-    ];
+    const ALL: [Family; 7] = [Family::Android12_5_10, Family::Android13_5_10, Family::Android13_5_15, Family::Android14_5_15, Family::Android14_6_1, Family::Android15_6_6, Family::Android16_6_12];
 
     /// The `version` identifier used by the workflows, e.g. `android16-6.12`.
     fn id(self) -> &'static str {
@@ -258,17 +232,10 @@ impl Family {
     }
 
     fn parse(value: &str) -> Result<Family> {
-        Family::ALL
-            .into_iter()
-            .find(|f| f.id() == value)
-            .ok_or_else(|| {
-                let known = Family::ALL
-                    .iter()
-                    .map(|f| f.id())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                anyhow::anyhow!("unknown kernel family '{value}' (expected one of: {known})")
-            })
+        Family::ALL.into_iter().find(|f| f.id() == value).ok_or_else(|| {
+            let known = Family::ALL.iter().map(|f| f.id()).collect::<Vec<_>>().join(", ");
+            anyhow::anyhow!("unknown kernel family '{value}' (expected one of: {known})")
+        })
     }
 
     /// The matching config JSON under `.github/config`.
@@ -290,46 +257,102 @@ impl Family {
 // Static kernel configuration sets (from the composite actions)
 // ---------------------------------------------------------------------------
 
+macro_rules! kconfig {
+    ($($k:ident=$v:tt)*) => {
+        &[$(concat!(stringify!($k), "=", stringify!($v))),*]
+    };
+}
+
 /// `root-setup/action.yml` — enable the KernelSU root implementation.
-const CFG_ROOT: &[&str] = &["CONFIG_KSU=y"];
+const CFG_ROOT: &[&str] = kconfig![
+    CONFIG_KSU=y
+    // No debug printing from the root driver.
+    CONFIG_KSU_DEBUG=n
+];
 
 /// `susfs-config/action.yml` — the fixed SUSFS option block.
-const CFG_SUSFS: &[&str] = &[
-    "CONFIG_KSU_SUSFS=y",
-    "CONFIG_KSU_SUSFS_SUS_PATH=y",
-    "CONFIG_KSU_SUSFS_SUS_MOUNT=y",
-    "CONFIG_KSU_SUSFS_SUS_KSTAT=y",
-    "CONFIG_KSU_SUSFS_SPOOF_UNAME=y",
-    "CONFIG_KSU_SUSFS_ENABLE_LOG=y",
-    "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y",
-    "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y",
-    "CONFIG_KSU_SUSFS_SUS_MAP=y",
+const CFG_SUSFS: &[&str] = kconfig![
+    CONFIG_KSU_SUSFS=y
+    CONFIG_KSU_SUSFS_SUS_PATH=y
+    CONFIG_KSU_SUSFS_SUS_MOUNT=y
+    CONFIG_KSU_SUSFS_SUS_KSTAT=y
+    CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+    CONFIG_KSU_SUSFS_ENABLE_LOG=n
+    CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+    CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+    CONFIG_KSU_SUSFS_SUS_MAP=y
 ];
 
 /// `susfs-config/action.yml` — `OPEN_REDIRECT` follows NoMount, which is out of
 /// scope, so the "no NoMount" branch is always taken here.
-const CFG_SUSFS_OPEN_REDIRECT: &[&str] = &["CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"];
+const CFG_SUSFS_OPEN_REDIRECT: &[&str] = kconfig![CONFIG_KSU_SUSFS_OPEN_REDIRECT = y];
 
 /// `droidspaces/action.yml` — the LXC-style container runtime options.
-const CFG_DROIDSPACES: &[&str] = &[
-    "CONFIG_PID_NS=y",
-    "CONFIG_SYSVIPC=y",
-    "CONFIG_POSIX_MQUEUE=y",
-    "CONFIG_IPC_NS=y",
-    "CONFIG_DEVTMPFS=y",
-    "CONFIG_BINFMT_MISC=y",
-    "CONFIG_BINFMT_SCRIPT=y",
-    "CONFIG_BINFMT_ELF=y",
-    "CONFIG_USER_NS=y",
+const CFG_DROIDSPACES: &[&str] = kconfig![
+    CONFIG_PID_NS=y
+    CONFIG_SYSVIPC=y
+    CONFIG_POSIX_MQUEUE=y
+    CONFIG_IPC_NS=y
+    CONFIG_DEVTMPFS=y
+    CONFIG_BINFMT_MISC=y
+    CONFIG_BINFMT_SCRIPT=y
+    CONFIG_BINFMT_ELF=y
+    CONFIG_USER_NS=y
 ];
 
 /// `misc/action.yml` — applied unconditionally by `build.yml`.
-const CFG_MISC: &[&str] = &[
-    "CONFIG_OVERLAY_FS=y",
-    "CONFIG_TMPFS_XATTR=y",
-    "CONFIG_TMPFS_POSIX_ACL=y",
-    "CONFIG_KALLSYMS=y",
-    "CONFIG_KALLSYMS_ALL=y",
+const CFG_MISC: &[&str] = kconfig![
+    CONFIG_OVERLAY_FS=y
+    CONFIG_TMPFS_XATTR=y
+    CONFIG_TMPFS_POSIX_ACL=y
+    CONFIG_KALLSYMS=y
+    CONFIG_KALLSYMS_ALL=y
+    // IP Set & Firewall Configs
+    CONFIG_IP_SET=y
+    CONFIG_IP_SET_MAX=65534
+    CONFIG_IP_SET_BITMAP_IP=y
+    CONFIG_IP_SET_BITMAP_IPMAC=y
+    CONFIG_IP_SET_BITMAP_PORT=y
+    CONFIG_IP_SET_HASH_IP=y
+    CONFIG_IP_SET_HASH_IPMARK=y
+    CONFIG_IP_SET_HASH_IPPORT=y
+    CONFIG_IP_SET_HASH_IPPORTIP=y
+    CONFIG_IP_SET_HASH_IPPORTNET=y
+    CONFIG_IP_SET_HASH_IPMAC=y
+    CONFIG_IP_SET_HASH_MAC=y
+    CONFIG_IP_SET_HASH_NETPORTNET=y
+    CONFIG_IP_SET_HASH_NET=y
+    CONFIG_IP_SET_HASH_NETNET=y
+    CONFIG_IP_SET_HASH_NETPORT=y
+    CONFIG_IP_SET_HASH_NETIFACE=y
+    CONFIG_IP_SET_LIST_SET=y
+    CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
+    CONFIG_NETFILTER_XT_SET=y
+    CONFIG_NETFILTER_XT_TARGET_LOG=y
+    CONFIG_NETFILTER_XT_MATCH_RECENT=y
+    CONFIG_IP6_NF_NAT=y
+    CONFIG_IP6_NF_TARGET_MASQUERADE=y
+    // TCP Congestion Control Configs
+    CONFIG_TCP_CONG_ADVANCED=y
+    CONFIG_TCP_CONG_BBR=y
+    CONFIG_TCP_CONG_CUBIC=y
+    CONFIG_TCP_CONG_BIC=y
+    CONFIG_TCP_CONG_WESTWOOD=y
+    CONFIG_TCP_CONG_HTCP=y
+    CONFIG_DEFAULT_BBR=y
+    CONFIG_DEFAULT_TCP_CONG="bbr"
+    // Traffic Shaping (Qdisc) Configs
+    CONFIG_NET_SCH_FQ=y
+    CONFIG_NET_SCH_FQ_CODEL=y
+    CONFIG_NET_SCH_CAKE=y
+    // Connection Marking Configs
+    CONFIG_NET_ACT_CONNMARK=y
+    // TTL/Hop Limit Target Configs
+    CONFIG_IP_NF_TARGET_TTL=y
+    CONFIG_IP6_NF_TARGET_HL=y
+    CONFIG_IP6_NF_MATCH_HL=y
+    // Wireguard VPN Configs
+    CONFIG_WIREGUARD=y
 ];
 
 // ---------------------------------------------------------------------------
@@ -356,13 +379,7 @@ struct Options {
 
 impl Options {
     fn jobs(&self) -> usize {
-        if self.jobs > 0 {
-            self.jobs
-        } else {
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4)
-        }
+        if self.jobs > 0 { self.jobs } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) }
     }
 }
 
@@ -427,11 +444,7 @@ impl Ctx {
     }
 
     fn log(&self, message: impl AsRef<str>) {
-        say(&format!(
-            "[trustgki {}] {}",
-            self.file_name,
-            message.as_ref()
-        ));
+        say(&format!("[trustgki {}] {}", self.file_name, message.as_ref()));
     }
 
     fn note(&mut self, message: impl Into<String>) {
@@ -473,9 +486,7 @@ fn run_with_env(cwd: &Path, program: &str, args: &[&str], env: &[(&str, String)]
     for (key, value) in env {
         cmd.env(key, value);
     }
-    let status = cmd
-        .status()
-        .with_context(|| format!("failed to spawn `{program}`"))?;
+    let status = cmd.status().with_context(|| format!("failed to spawn `{program}`"))?;
     if !status.success() {
         bail!("command failed ({}): {}", status, shown);
     }
@@ -484,23 +495,11 @@ fn run_with_env(cwd: &Path, program: &str, args: &[&str], env: &[(&str, String)]
 
 /// Run a command and capture stdout (trailing newlines trimmed).
 fn capture(cwd: &Path, program: &str, args: &[&str]) -> Result<String> {
-    let output = Command::new(program)
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .with_context(|| format!("failed to spawn `{program}`"))?;
+    let output = Command::new(program).args(args).current_dir(cwd).output().with_context(|| format!("failed to spawn `{program}`"))?;
     if !output.status.success() {
-        bail!(
-            "command failed ({}): {} {}\n{}",
-            output.status,
-            program,
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr)
-        );
+        bail!("command failed ({}): {} {}\n{}", output.status, program, args.join(" "), String::from_utf8_lossy(&output.stderr));
     }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .trim_end()
-        .to_string())
+    Ok(String::from_utf8_lossy(&output.stdout).trim_end().to_string())
 }
 
 /// `patch -p1` (plus extra flags) with the patch file on stdin, run in `cwd`.
@@ -508,20 +507,9 @@ fn patch_file(cwd: &Path, patch: &Path, extra: &[&str]) -> Result<()> {
     if !patch.exists() {
         bail!("patch file not found: {}", pstr(patch));
     }
-    let file =
-        fs::File::open(patch).with_context(|| format!("cannot open patch {}", pstr(patch)))?;
-    say(&format!(
-        "+ patch -p1 {} < {}",
-        extra.join(" "),
-        pstr(patch)
-    ));
-    let status = Command::new("patch")
-        .arg("-p1")
-        .args(extra)
-        .current_dir(cwd)
-        .stdin(Stdio::from(file))
-        .status()
-        .context("failed to spawn `patch`")?;
+    let file = fs::File::open(patch).with_context(|| format!("cannot open patch {}", pstr(patch)))?;
+    say(&format!("+ patch -p1 {} < {}", extra.join(" "), pstr(patch)));
+    let status = Command::new("patch").arg("-p1").args(extra).current_dir(cwd).stdin(Stdio::from(file)).status().context("failed to spawn `patch`")?;
     if !status.success() {
         bail!("patch {} failed ({})", pstr(patch), status);
     }
@@ -533,15 +521,7 @@ fn patch_can_apply(cwd: &Path, patch: &Path) -> bool {
     let Ok(file) = fs::File::open(patch) else {
         return false;
     };
-    Command::new("patch")
-        .args(["-p1", "--dry-run", "--silent"])
-        .current_dir(cwd)
-        .stdin(Stdio::from(file))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    Command::new("patch").args(["-p1", "--dry-run", "--silent"]).current_dir(cwd).stdin(Stdio::from(file)).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
 }
 
 /// Retry a fallible operation with a fixed delay, mirroring the `retry()`
@@ -568,12 +548,7 @@ fn ls_remote(repo: &str, reference: &str) -> Result<String> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     retry(5, Duration::from_secs(5), |_| {
         let out = capture(&cwd, "git", &["ls-remote", repo, reference])?;
-        let sha = out
-            .lines()
-            .next()
-            .and_then(|line| line.split_whitespace().next())
-            .unwrap_or("")
-            .to_string();
+        let sha = out.lines().next().and_then(|line| line.split_whitespace().next()).unwrap_or("").to_string();
         if sha.len() != 40 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
             bail!("git ls-remote {repo} {reference} returned `{sha}`");
         }
@@ -583,9 +558,7 @@ fn ls_remote(repo: &str, reference: &str) -> Result<String> {
 
 /// `git clone --no-checkout` + `fetch --depth=1 <sha>` + detached checkout.
 fn clone_pinned(repo: &str, dir: &Path, reference: &str) -> Result<()> {
-    let parent = dir
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("no parent for {}", pstr(dir)))?;
+    let parent = dir.parent().ok_or_else(|| anyhow::anyhow!("no parent for {}", pstr(dir)))?;
     run(parent, "git", &["clone", "--no-checkout", repo, &pstr(dir)])?;
     run(dir, "git", &["fetch", "--depth=1", "origin", reference])?;
     run(dir, "git", &["checkout", "--detach", reference])?;
@@ -664,10 +637,7 @@ fn sed_insert_before(content: &str, needle: &str, inserted: &str) -> String {
 
 /// `sed '/^needle$/d'` — drop lines whose trimmed content equals `needle`.
 fn sed_delete_exact(content: &str, needle: &str) -> String {
-    content
-        .split_inclusive('\n')
-        .filter(|line| line.trim_end_matches(['\n', '\r']) != needle)
-        .collect()
+    content.split_inclusive('\n').filter(|line| line.trim_end_matches(['\n', '\r']) != needle).collect()
 }
 
 /// Append a line, adding the missing trailing newline first (`echo >> file`).
@@ -695,11 +665,7 @@ fn replace_last_line(content: &str, line: &str) -> String {
 }
 
 /// Regex `replace_all` that keeps the original text unless the closure opts in.
-fn regex_replace(
-    content: &str,
-    pattern: &str,
-    replacement: impl Fn(&regex::Captures<'_>) -> Option<String>,
-) -> Result<String> {
+fn regex_replace(content: &str, pattern: &str, replacement: impl Fn(&regex::Captures<'_>) -> Option<String>) -> Result<String> {
     let re = Regex::new(pattern).with_context(|| format!("bad regex: {pattern}"))?;
     let mut out = String::with_capacity(content.len());
     let mut last = 0usize;
@@ -730,11 +696,7 @@ fn insert_before_regex_once(content: &str, pattern: &str, insert: &str) -> Resul
 }
 
 /// Apply a py-style `re.sub(pattern, repl, count=1)` on a file.
-fn regex_sub_once(
-    content: &str,
-    pattern: &str,
-    replacement: impl Fn(&regex::Captures<'_>) -> String,
-) -> Result<String> {
+fn regex_sub_once(content: &str, pattern: &str, replacement: impl Fn(&regex::Captures<'_>) -> String) -> Result<String> {
     let re = Regex::new(pattern).with_context(|| format!("bad regex: {pattern}"))?;
     let Some(caps) = re.captures(content) else {
         return Ok(content.to_string());
@@ -749,11 +711,7 @@ fn regex_sub_once(
 
 /// `sort -V`-style comparison of dotted numeric versions.
 fn version_key(value: &str) -> Vec<u64> {
-    value
-        .split(|c: char| !c.is_ascii_digit())
-        .filter(|part| !part.is_empty())
-        .map(|part| part.parse().unwrap_or(0))
-        .collect()
+    value.split(|c: char| !c.is_ascii_digit()).filter(|part| !part.is_empty()).map(|part| part.parse().unwrap_or(0)).collect()
 }
 
 fn version_ge(a: &str, b: &str) -> bool {
@@ -770,19 +728,11 @@ fn version_ge(a: &str, b: &str) -> bool {
 
 /// Numeric sublevel comparison; a non-numeric sublevel never matches a bound.
 fn sublevel_le(sublevel: &str, bound: u64) -> bool {
-    sublevel
-        .trim()
-        .parse::<u64>()
-        .map(|value| value <= bound)
-        .unwrap_or(false)
+    sublevel.trim().parse::<u64>().map(|value| value <= bound).unwrap_or(false)
 }
 
 fn sublevel_ge(sublevel: &str, bound: u64) -> bool {
-    sublevel
-        .trim()
-        .parse::<u64>()
-        .map(|value| value >= bound)
-        .unwrap_or(false)
+    sublevel.trim().parse::<u64>().map(|value| value >= bound).unwrap_or(false)
 }
 
 fn chmod_exec(path: &Path) -> Result<()> {
@@ -828,21 +778,7 @@ fn setup_build_environment(ctx: &Ctx) -> Result<()> {
         if attempt > 1 {
             eprintln!("retry {attempt}/5: fetching repo launcher");
         }
-        run(
-            ws,
-            "curl",
-            &[
-                "-LfsS",
-                "--retry",
-                "5",
-                "--retry-delay",
-                "5",
-                "--retry-all-errors",
-                "-o",
-                &pstr(&repo_tool),
-                URL_REPO_TOOL,
-            ],
-        )
+        run(ws, "curl", &["-LfsS", "--retry", "5", "--retry-delay", "5", "--retry-all-errors", "-o", &pstr(&repo_tool), URL_REPO_TOOL])
     })?;
     chmod_exec(&repo_tool)?;
 
@@ -851,11 +787,7 @@ fn setup_build_environment(ctx: &Ctx) -> Result<()> {
     if patches_dir.exists() {
         fs::remove_dir_all(&patches_dir)?;
     }
-    run(
-        ws,
-        "git",
-        &["clone", REPO_KERNEL_PATCHES, &pstr(&patches_dir)],
-    )?;
+    run(ws, "git", &["clone", REPO_KERNEL_PATCHES, &pstr(&patches_dir)])?;
     if let Some(pin) = &ctx.opts.kernel_patches_commit {
         run(&patches_dir, "git", &["fetch", "--depth=1", "origin", pin])?;
         run(&patches_dir, "git", &["checkout", pin])?;
@@ -870,17 +802,7 @@ fn setup_build_environment(ctx: &Ctx) -> Result<()> {
     if ak3_dir.exists() {
         fs::remove_dir_all(&ak3_dir)?;
     }
-    run(
-        ws,
-        "git",
-        &[
-            "clone",
-            "-b",
-            BRANCH_ANY_KERNEL3,
-            REPO_ANY_KERNEL3,
-            &pstr(&ak3_dir),
-        ],
-    )?;
+    run(ws, "git", &["clone", "-b", BRANCH_ANY_KERNEL3, REPO_ANY_KERNEL3, &pstr(&ak3_dir)])?;
     if let Some(pin) = &ctx.opts.anykernel3_commit {
         run(&ak3_dir, "git", &["fetch", "--depth=1", "origin", pin])?;
         run(&ak3_dir, "git", &["checkout", pin])?;
@@ -894,17 +816,9 @@ fn setup_build_environment(ctx: &Ctx) -> Result<()> {
     if ctx.family == Family::Android12_5_10 {
         ctx.log("installing dwarves/libelf-dev (android12-5.10 BTF tooling)");
         let update = run(ws, "sudo", &["apt-get", "update", "-qq"]);
-        let install = update.and_then(|_| {
-            run(
-                ws,
-                "sudo",
-                &["apt-get", "install", "-y", "-qq", "dwarves", "libelf-dev"],
-            )
-        });
+        let install = update.and_then(|_| run(ws, "sudo", &["apt-get", "install", "-y", "-qq", "dwarves", "libelf-dev"]));
         if let Err(err) = install {
-            ctx.log(format!(
-                "warning: could not install BTF tooling automatically ({err:#})"
-            ));
+            ctx.log(format!("warning: could not install BTF tooling automatically ({err:#})"));
         }
     }
     Ok(())
@@ -919,19 +833,12 @@ fn download_kernel(ctx: &mut Ctx) -> Result<()> {
     ctx.log("── download kernel repository (repo init/sync)");
     let kernel = ctx.kernel_dir();
     let repo_tool = ctx.opts.workspace.join("git-repo/repo");
-    let branch = format!(
-        "common-{}-{}-{}",
-        ctx.family.android(),
-        ctx.family.kernel(),
-        ctx.os_patch_level
-    );
+    let branch = format!("common-{}-{}-{}", ctx.family.android(), ctx.family.kernel(), ctx.os_patch_level);
 
     let mut attempt = 1usize;
     loop {
         if attempt > 1 {
-            ctx.log(format!(
-                "cleaning kernel workspace before retry {attempt}/3"
-            ));
+            ctx.log(format!("cleaning kernel workspace before retry {attempt}/3"));
             empty_dir(&kernel)?;
             std::thread::sleep(Duration::from_secs(15));
         }
@@ -952,10 +859,7 @@ fn download_kernel(ctx: &mut Ctx) -> Result<()> {
     if common.join(".git").exists() {
         ctx.kernel_sha = capture(&common, "git", &["rev-parse", "HEAD"])?;
         let subject = capture(&common, "git", &["log", "-1", "--format=%s"])?;
-        ctx.log(format!(
-            "kernel/common commit: {} ({subject})",
-            ctx.kernel_sha
-        ));
+        ctx.log(format!("kernel/common commit: {} ({subject})", ctx.kernel_sha));
     } else {
         ctx.log("warning: kernel/common is not a git checkout; no commit metadata");
     }
@@ -963,49 +867,19 @@ fn download_kernel(ctx: &mut Ctx) -> Result<()> {
 }
 
 fn init_kernel_repo(ctx: &Ctx, kernel: &Path, repo_tool: &Path, branch: &str) -> Result<()> {
-    run(
-        kernel,
-        &pstr(repo_tool),
-        &[
-            "init",
-            "-u",
-            REPO_KERNEL_MANIFEST,
-            "-b",
-            branch,
-            "--depth=1",
-        ],
-    )?;
+    run(kernel, &pstr(repo_tool), &["init", "-u", REPO_KERNEL_MANIFEST, "-b", branch, "--depth=1"])?;
 
     // Deprecated branches live under `deprecated/<branch>` in the manifest.
     let remote = capture(kernel, "git", &["ls-remote", REPO_KERNEL_COMMON, branch])?;
     if remote.contains("deprecated") {
-        ctx.log(format!(
-            "note: branch {branch} is deprecated; rewriting manifest"
-        ));
+        ctx.log(format!("note: branch {branch} is deprecated; rewriting manifest"));
         let manifest = kernel.join(".repo/manifests/default.xml");
         let content = read(&manifest)?;
-        let rewritten = content.replace(
-            &format!("\"{branch}\""),
-            &format!("\"deprecated/{branch}\""),
-        );
+        let rewritten = content.replace(&format!("\"{branch}\""), &format!("\"deprecated/{branch}\""));
         write(&manifest, &rewritten)?;
     }
 
-    run(
-        kernel,
-        "timeout",
-        &[
-            "15m",
-            &pstr(repo_tool),
-            "sync",
-            "-c",
-            "--current-branch",
-            "--no-clone-bundle",
-            "--no-tags",
-            "--jobs-checkout=4",
-            "-j4",
-        ],
-    )
+    run(kernel, "timeout", &["15m", &pstr(repo_tool), "sync", "-c", "--current-branch", "--no-clone-bundle", "--no-tags", "--jobs-checkout=4", "-j4"])
 }
 
 // ---------------------------------------------------------------------------
@@ -1030,44 +904,24 @@ fn set_build_timestamp(ctx: &mut Ctx) -> Result<()> {
 
     // `FIXED_BUILD_DATE="${OS_PATCH_LEVEL_YM}-05 04:20:00 UTC"`.
     let mut parts = year_month.split('-');
-    let year: i32 = parts
-        .next()
-        .unwrap_or("")
-        .parse()
-        .with_context(|| format!("cannot parse year from '{year_month}'"))?;
-    let month: u8 = parts
-        .next()
-        .unwrap_or("")
-        .parse()
-        .with_context(|| format!("cannot parse month from '{year_month}'"))?;
+    let year: i32 = parts.next().unwrap_or("").parse().with_context(|| format!("cannot parse year from '{year_month}'"))?;
+    let month: u8 = parts.next().unwrap_or("").parse().with_context(|| format!("cannot parse month from '{year_month}'"))?;
     let month = Month::try_from(month).context("month out of range")?;
     let date = Date::from_calendar_date(year, month, 5)?;
     let clock = ClockTime::from_hms(4, 20, 0)?;
     let stamp = OffsetDateTime::new_utc(date, clock);
 
     ctx.source_date_epoch = stamp.unix_timestamp();
-    ctx.kbuild_timestamp = stamp
-        .format(&format_description!(
-            "[weekday repr:short] [month repr:short] [day] [hour]:[minute]:[second] UTC [year]"
-        ))
-        .context("cannot format KBUILD_BUILD_TIMESTAMP")?;
-    ctx.git_date = stamp
-        .format(&format_description!(
-            "[year]-[month]-[day]T[hour]:[minute]:[second]Z"
-        ))
-        .context("cannot format GIT date")?;
-    ctx.log(format!(
-        "SOURCE_DATE_EPOCH={} (KBUILD_BUILD_TIMESTAMP=\"{}\")",
-        ctx.source_date_epoch, ctx.kbuild_timestamp
-    ));
+    ctx.kbuild_timestamp = stamp.format(&format_description!("[weekday repr:short] [month repr:short] [day] [hour]:[minute]:[second] UTC [year]")).context("cannot format KBUILD_BUILD_TIMESTAMP")?;
+    ctx.git_date = stamp.format(&format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z")).context("cannot format GIT date")?;
+    ctx.log(format!("SOURCE_DATE_EPOCH={} (KBUILD_BUILD_TIMESTAMP=\"{}\")", ctx.source_date_epoch, ctx.kbuild_timestamp));
     Ok(())
 }
 
 /// `extract-sublevel-file-name/action.yml` — resolve `SUBLEVEL` and `FILE_NAME`.
 fn extract_sublevel_and_file_name(ctx: &mut Ctx) -> Result<()> {
     // `X` (the config-file sentinel) and `lts` both mean "read the tip Makefile".
-    let resolve_from_makefile = ctx.os_patch_level.eq_ignore_ascii_case("lts")
-        || ctx.sublevel_input.eq_ignore_ascii_case(SUBLEVEL_LTS);
+    let resolve_from_makefile = ctx.os_patch_level.eq_ignore_ascii_case("lts") || ctx.sublevel_input.eq_ignore_ascii_case(SUBLEVEL_LTS);
     let sublevel = if resolve_from_makefile {
         let makefile = ctx.common_dir().join("Makefile");
         if !makefile.exists() {
@@ -1077,16 +931,9 @@ fn extract_sublevel_and_file_name(ctx: &mut Ctx) -> Result<()> {
         let re = Regex::new(r"^[[:space:]]*SUBLEVEL[[:space:]]*=").expect("static regex");
         let matches: Vec<&str> = content.lines().filter(|line| re.is_match(line)).collect();
         if matches.len() != 1 {
-            bail!(
-                "expected exactly one SUBLEVEL assignment in {}, found {}",
-                pstr(&makefile),
-                matches.len()
-            );
+            bail!("expected exactly one SUBLEVEL assignment in {}, found {}", pstr(&makefile), matches.len());
         }
-        let value = matches[0]
-            .split_once('=')
-            .map(|(_, v)| v.trim().to_string())
-            .unwrap_or_default();
+        let value = matches[0].split_once('=').map(|(_, v)| v.trim().to_string()).unwrap_or_default();
         if value.is_empty() || !value.chars().all(|c| c.is_ascii_digit()) {
             bail!("invalid numeric SUBLEVEL '{value}' in {}", pstr(&makefile));
         }
@@ -1096,13 +943,7 @@ fn extract_sublevel_and_file_name(ctx: &mut Ctx) -> Result<()> {
     };
     ctx.sublevel = sublevel;
 
-    let mut file_name = format!(
-        "{}.{}-{}-{}",
-        ctx.family.kernel(),
-        ctx.sublevel,
-        ctx.family.android(),
-        ctx.os_patch_level
-    );
+    let mut file_name = format!("{}.{}-{}-{}", ctx.family.kernel(), ctx.sublevel, ctx.family.android(), ctx.os_patch_level);
     if !ctx.opts.variant.is_empty() && ctx.opts.variant != "Normal" {
         file_name.push_str(&format!("-{}", ctx.opts.variant));
     }
@@ -1122,25 +963,15 @@ fn detect_glibc() -> Option<String> {
     if text.trim().is_empty() {
         text = String::from_utf8_lossy(&output.stderr).into_owned();
     }
-    text.lines()
-        .next()
-        .and_then(|line| line.split_whitespace().last())
-        .map(|value| value.to_string())
+    text.lines().next().and_then(|line| line.split_whitespace().last()).map(|value| value.to_string())
 }
 
 /// Compatibility fixes keyed on glibc, family and sublevel.
 fn apply_kernel_fixes(ctx: &mut Ctx) -> Result<()> {
     ctx.log("── kernel fixes");
     let glibc = detect_glibc();
-    let glibc_ge_238 = glibc
-        .as_deref()
-        .map(|value| version_ge(value, "2.38"))
-        .unwrap_or(false);
-    ctx.log(format!(
-        "glibc {} (>= 2.38: {})",
-        glibc.as_deref().unwrap_or("unknown"),
-        glibc_ge_238
-    ));
+    let glibc_ge_238 = glibc.as_deref().map(|value| version_ge(value, "2.38")).unwrap_or(false);
+    ctx.log(format!("glibc {} (>= 2.38: {})", glibc.as_deref().unwrap_or("unknown"), glibc_ge_238));
 
     if glibc_ge_238 {
         // `tools/bpf/resolve_btfids/Makefile`: forward CFLAGS into the sub-make.
@@ -1161,22 +992,13 @@ fn apply_kernel_fixes(ctx: &mut Ctx) -> Result<()> {
         ctx.note(format!("Makefile EXTRA_CFLAGS fix: {fixed}"));
 
         // `tools/lib/subcmd/parse-options.c`: C99 declarations break old trees.
-        let needs_parse_fix = (ctx.family == Family::Android13_5_10
-            && sublevel_le(&ctx.sublevel, 186))
-            || (ctx.family == Family::Android13_5_15 && sublevel_le(&ctx.sublevel, 119))
-            || (ctx.family == Family::Android14_5_15 && sublevel_le(&ctx.sublevel, 110));
+        let needs_parse_fix = (ctx.family == Family::Android13_5_10 && sublevel_le(&ctx.sublevel, 186)) || (ctx.family == Family::Android13_5_15 && sublevel_le(&ctx.sublevel, 119)) || (ctx.family == Family::Android14_5_15 && sublevel_le(&ctx.sublevel, 110));
         if needs_parse_fix {
             edit_common(ctx, "tools/lib/subcmd/parse-options.c", |content| {
                 let mut out = sed_insert_after(content, "char *buf = NULL;", "int i;");
-                out = out.replace(
-                    "for (int i = 0; subcommands[i]; i++) {",
-                    "for (i = 0; subcommands[i]; i++) {",
-                );
+                out = out.replace("for (int i = 0; subcommands[i]; i++) {", "for (i = 0; subcommands[i]; i++) {");
                 out = sed_insert_after(&out, "if (subcommands) {", "int i;");
-                out.replace(
-                    "for (int i = 0; subcommands[i]; i++)",
-                    "for (i = 0; subcommands[i]; i++)",
-                )
+                out.replace("for (int i = 0; subcommands[i]; i++)", "for (i = 0; subcommands[i]; i++)")
             })?;
             ctx.note("parse-options.c fix: applied");
         } else {
@@ -1192,29 +1014,18 @@ fn apply_kernel_fixes(ctx: &mut Ctx) -> Result<()> {
             if content.contains("#include <trace/hooks/fs.h>") {
                 return content.to_string();
             }
-            sed_insert_after(
-                content,
-                "#include <trace/hooks/blk.h>",
-                "#include <trace/hooks/fs.h>",
-            )
+            sed_insert_after(content, "#include <trace/hooks/blk.h>", "#include <trace/hooks/fs.h>")
         })?;
         ctx.note("fs/namespace.c include fix (android15-6.6): applied");
     }
 
     // mm/mmap.c VM_PAD_MASK fix for four pinned sublevels.
-    let mmap_fix = (ctx.family == Family::Android12_5_10 && ctx.sublevel == "226")
-        || (ctx.family == Family::Android13_5_10 && ctx.sublevel == "223")
-        || (ctx.family == Family::Android13_5_15 && ctx.sublevel == "167")
-        || (ctx.family == Family::Android14_5_15 && ctx.sublevel == "167");
+    let mmap_fix = (ctx.family == Family::Android12_5_10 && ctx.sublevel == "226") || (ctx.family == Family::Android13_5_10 && ctx.sublevel == "223") || (ctx.family == Family::Android13_5_15 && ctx.sublevel == "167") || (ctx.family == Family::Android14_5_15 && ctx.sublevel == "167");
     if mmap_fix {
         // NOTE: the shell action's `sed` replacement contains a literal `&`,
         // which sed expands to the whole match and corrupts the line. The
         // intended transformation is reproduced here instead.
-        let fixed = regex_replace(
-            &read(&ctx.common_dir().join("mm/mmap.c"))?,
-            r"[ \t]*vm_flags_clear\(new_vma, VM_PAD_MASK\);",
-            |_| Some("                new_vma->vm_flags &= ~VM_PAD_MASK;".to_string()),
-        )?;
+        let fixed = regex_replace(&read(&ctx.common_dir().join("mm/mmap.c"))?, r"[ \t]*vm_flags_clear\(new_vma, VM_PAD_MASK\);", |_| Some("                new_vma->vm_flags &= ~VM_PAD_MASK;".to_string()))?;
         write(&ctx.common_dir().join("mm/mmap.c"), &fixed)?;
         ctx.note("mm/mmap.c VM_PAD_MASK fix: applied");
     }
@@ -1235,10 +1046,7 @@ fn setup_root(ctx: &mut Ctx) -> Result<()> {
     // `dev-susfs` branch), so the resolved commit decides which remote to use.
     let reference = match &ctx.opts.root_commit {
         Some(sha) => sha.clone(),
-        None => match ls_remote(
-            REPO_KSU_NEXT_SUSFS,
-            &format!("refs/heads/{BRANCH_KSU_NEXT_SUSFS}"),
-        ) {
+        None => match ls_remote(REPO_KSU_NEXT_SUSFS, &format!("refs/heads/{BRANCH_KSU_NEXT_SUSFS}")) {
             Ok(sha) => sha,
             Err(err) => {
                 ctx.log(format!(
@@ -1305,41 +1113,23 @@ fn setup_root(ctx: &mut Ctx) -> Result<()> {
         bail!("selected root checkout does not contain a kernel integration");
     }
     ctx.root_sha = capture(&checkout, "git", &["rev-parse", "HEAD"])?;
-    let root_version = capture(
-        &checkout,
-        "git",
-        &["describe", "--tags", "--always", "--dirty"],
-    )?;
-    ctx.note(format!(
-        "root={} commit={} version={root_version}",
-        repo_used, ctx.root_sha
-    ));
+    let root_version = capture(&checkout, "git", &["describe", "--tags", "--always", "--dirty"])?;
+    ctx.note(format!("root={} commit={} version={root_version}", repo_used, ctx.root_sha));
 
     // Symlink `drivers/kernelsu -> <checkout>/kernel`, then register it.
     let relative = path_relative(&checkout.join("kernel"), &drivers_dir)?;
-    std::os::unix::fs::symlink(&relative, drivers_dir.join("kernelsu"))
-        .context("cannot create drivers/kernelsu symlink")?;
+    std::os::unix::fs::symlink(&relative, drivers_dir.join("kernelsu")).context("cannot create drivers/kernelsu symlink")?;
 
     let makefile = drivers_dir.join("Makefile");
     let makefile_content = read(&makefile)?;
     if !makefile_content.contains("obj-$(CONFIG_KSU) += kernelsu/") {
-        write(
-            &makefile,
-            &append_line(&makefile_content, "obj-$(CONFIG_KSU) += kernelsu/"),
-        )?;
+        write(&makefile, &append_line(&makefile_content, "obj-$(CONFIG_KSU) += kernelsu/"))?;
     }
     let kconfig = drivers_dir.join("Kconfig");
     let kconfig_content = read(&kconfig)?;
     if !kconfig_content.contains("source \"drivers/kernelsu/Kconfig\"") {
         // `sed -i '/endmenu/i ...'` inserts before each matching line.
-        write(
-            &kconfig,
-            &sed_insert_before(
-                &kconfig_content,
-                "endmenu",
-                "source \"drivers/kernelsu/Kconfig\"",
-            ),
-        )?;
+        write(&kconfig, &sed_insert_before(&kconfig_content, "endmenu", "source \"drivers/kernelsu/Kconfig\""))?;
     }
 
     set_kernel_config(ctx, CFG_ROOT)
@@ -1347,17 +1137,11 @@ fn setup_root(ctx: &mut Ctx) -> Result<()> {
 
 /// `realpath --relative-to=<base> <target>`.
 fn path_relative(target: &Path, base: &Path) -> Result<PathBuf> {
-    let target = fs::canonicalize(target)
-        .with_context(|| format!("cannot canonicalize {}", pstr(target)))?;
-    let base =
-        fs::canonicalize(base).with_context(|| format!("cannot canonicalize {}", pstr(base)))?;
+    let target = fs::canonicalize(target).with_context(|| format!("cannot canonicalize {}", pstr(target)))?;
+    let base = fs::canonicalize(base).with_context(|| format!("cannot canonicalize {}", pstr(base)))?;
     let target_parts: Vec<_> = target.components().collect();
     let base_parts: Vec<_> = base.components().collect();
-    let common = target_parts
-        .iter()
-        .zip(base_parts.iter())
-        .take_while(|(a, b)| a == b)
-        .count();
+    let common = target_parts.iter().zip(base_parts.iter()).take_while(|(a, b)| a == b).count();
     let mut result = PathBuf::new();
     for _ in common..base_parts.len() {
         result.push("..");
@@ -1394,9 +1178,7 @@ fn set_kernel_config(ctx: &Ctx, entries: &[&str]) -> Result<()> {
         let assignment = Regex::new(&format!(r"(?m)^{}=.*$", regex::escape(key)))?;
         let not_set = format!("# {key} is not set");
         if assignment.is_match(&content) {
-            content = assignment
-                .replace_all(&content, format!("{key}={value}").as_str())
-                .into_owned();
+            content = assignment.replace_all(&content, format!("{key}={value}").as_str()).into_owned();
         } else if content.lines().any(|l| l.trim() == not_set) {
             let mut out = String::with_capacity(content.len());
             for line in content.split_inclusive('\n') {
@@ -1449,13 +1231,7 @@ fn setup_susfs(ctx: &mut Ctx) -> Result<()> {
     if dir.exists() {
         fs::remove_dir_all(&dir)?;
     }
-    retry(5, Duration::from_secs(5), |_| {
-        run(
-            &ws,
-            "git",
-            &["clone", "-b", &branch, REPO_SUSFS, &pstr(&dir)],
-        )
-    })?;
+    retry(5, Duration::from_secs(5), |_| run(&ws, "git", &["clone", "-b", &branch, REPO_SUSFS, &pstr(&dir)]))?;
 
     let commit = match &ctx.opts.susfs_commit {
         Some(sha) => sha.clone(),
@@ -1464,28 +1240,19 @@ fn setup_susfs(ctx: &mut Ctx) -> Result<()> {
     run(&dir, "git", &["checkout", &commit])?;
     ctx.susfs_sha = capture(&dir, "git", &["rev-parse", "HEAD"])?;
     if ctx.susfs_sha != commit {
-        bail!(
-            "SUSFS commit mismatch: expected {commit}, got {}",
-            ctx.susfs_sha
-        );
+        bail!("SUSFS commit mismatch: expected {commit}, got {}", ctx.susfs_sha);
     }
     ctx.log(format!("SUSFS commit {commit} on {branch}"));
 
     // pershoot's SUSFS↔KernelSU coexistence patches, applied to the SUSFS tree.
-    for name in [
-        "0001-pershoot-Allow-core-to-be-built-with-no-features.patch",
-        "0002-pershoot-Implement-SuSFS-and-Toolkit-coexistence.patch",
-    ] {
+    for name in ["0001-pershoot-Allow-core-to-be-built-with-no-features.patch", "0002-pershoot-Implement-SuSFS-and-Toolkit-coexistence.patch"] {
         let patch = ctx.kernel_patches().join("pershoot/susfs4ksu").join(name);
         if patch.exists() {
             patch_file(&dir, &patch, &[])?;
         } else if ctx.opts.strict_patches {
             bail!("missing required SUSFS patch {}", pstr(&patch));
         } else {
-            ctx.note(format!(
-                "warning: {} not present in kernel_patches; skipping",
-                pstr(&patch)
-            ));
+            ctx.note(format!("warning: {} not present in kernel_patches; skipping", pstr(&patch)));
         }
     }
 
@@ -1495,16 +1262,9 @@ fn setup_susfs(ctx: &mut Ctx) -> Result<()> {
     // susfs-patches: copy the source files and the per-family integration patch.
     let common = ctx.common_dir();
     copy_files(&dir.join("kernel_patches/fs"), &common.join("fs"))?;
-    copy_files(
-        &dir.join("kernel_patches/include/linux"),
-        &common.join("include/linux"),
-    )?;
+    copy_files(&dir.join("kernel_patches/include/linux"), &common.join("include/linux"))?;
     let integration_name = format!("50_add_susfs_in_gki-{}.patch", ctx.family.id());
-    fs::copy(
-        dir.join("kernel_patches").join(&integration_name),
-        common.join(&integration_name),
-    )
-    .with_context(|| format!("cannot stage {integration_name}"))?;
+    fs::copy(dir.join("kernel_patches").join(&integration_name), common.join(&integration_name)).with_context(|| format!("cannot stage {integration_name}"))?;
 
     apply_susfs_fake_patches(ctx)?;
     patch_file(&common, &common.join(&integration_name), &[])?;
@@ -1515,30 +1275,14 @@ fn setup_susfs(ctx: &mut Ctx) -> Result<()> {
 /// The `fs/notify/fdinfo.c` shim shared by 5.10/5.15 families.
 fn fdinfo_shim(content: &str) -> Result<String> {
     // Drop the comment block that follows `if (inode) {`.
-    let mut out = regex_replace(
-        content,
-        r"(?s)(if \(inode\) \{\n)\t\t/\*\n(?:\t\t \*[^\n]*\n)+\t\t \*/\n",
-        |caps| Some(caps[1].to_string()),
-    )?;
+    let mut out = regex_replace(content, r"(?s)(if \(inode\) \{\n)\t\t/\*\n(?:\t\t \*[^\n]*\n)+\t\t \*/\n", |caps| Some(caps[1].to_string()))?;
     // Drop the now-unused `mask` local.
-    out = regex_replace_all(
-        &out,
-        r"(?m)^[ \t]*u32 mask = mark->mask & IN_ALL_EVENTS;\n",
-        "",
-    )?;
-    out = regex_replace_all(
-        &out,
-        r"\bmask,\s*mark->ignored_mask",
-        "inotify_mark_user_mask(mark)",
-    )?;
+    out = regex_replace_all(&out, r"(?m)^[ \t]*u32 mask = mark->mask & IN_ALL_EVENTS;\n", "")?;
+    out = regex_replace_all(&out, r"\bmask,\s*mark->ignored_mask", "inotify_mark_user_mask(mark)")?;
     out = regex_replace_all(&out, "ignored_mask:%x", "ignored_mask:0")?;
     // Provide the replacement helper.
     let helper = "static inline u32 inotify_mark_user_mask(struct fsnotify_mark *mark)\n{\n\treturn mark->mask & IN_ALL_EVENTS;\n}\n\n";
-    insert_before_regex_once(
-        &out,
-        r"(?m)^static void inotify_fdinfo\(struct seq_file \*m, struct fsnotify_mark \*mark\)$",
-        helper,
-    )
+    insert_before_regex_once(&out, r"(?m)^static void inotify_fdinfo\(struct seq_file \*m, struct fsnotify_mark \*mark\)$", helper)
 }
 
 /// Pre-patch mutations that let the SUSFS series apply to older trees.
@@ -1550,24 +1294,12 @@ fn apply_susfs_fake_patches(ctx: &Ctx) -> Result<()> {
         // `int this_len = min_t(int, ...)` -> `size_t this_len = min_t(size_t, ...)`.
         let path = ctx.common_dir().join("fs/proc/base.c");
         let content = read(&path)?;
-        let out = regex_replace(
-            &content,
-            r"(int|size_t)\s+this_len\s*=\s*min_t\s*\(\s*(int|size_t)\s*,",
-            |caps| {
-                if caps[1] == caps[2] {
-                    Some("size_t this_len = min_t(size_t,".to_string())
-                } else {
-                    None
-                }
-            },
-        )?;
+        let out = regex_replace(&content, r"(int|size_t)\s+this_len\s*=\s*min_t\s*\(\s*(int|size_t)\s*,", |caps| if caps[1] == caps[2] { Some("size_t this_len = min_t(size_t,".to_string()) } else { None })?;
         write(&path, &out)?;
         ctx.log("susfs fake patch: a12-5.10 base.c");
     }
 
-    if (family == Family::Android12_5_10 && sublevel_le(sublevel, 117))
-        || (family == Family::Android13_5_10 && sublevel_le(sublevel, 107))
-    {
+    if (family == Family::Android12_5_10 && sublevel_le(sublevel, 117)) || (family == Family::Android13_5_10 && sublevel_le(sublevel, 107)) {
         let path = ctx.common_dir().join("fs/notify/fdinfo.c");
         write(&path, &fdinfo_shim(&read(&path)?)?)?;
         ctx.log("susfs fake patch: 5.10 fdinfo.c");
@@ -1575,58 +1307,28 @@ fn apply_susfs_fake_patches(ctx: &Ctx) -> Result<()> {
 
     if family == Family::Android13_5_15 {
         if sublevel_le(sublevel, 41) {
-            edit_common(ctx, "fs/namespace.c", |content| {
-                sed_insert_after(
-                    content,
-                    "#include <linux/shmem_fs.h>",
-                    "#include <linux/mnt_idmapping.h>",
-                )
-            })?;
-            edit_common(ctx, "fs/open.c", |content| {
-                sed_insert_after(
-                    content,
-                    "#include <linux/compat.h>",
-                    "#include <linux/mnt_idmapping.h>",
-                )
-            })?;
+            edit_common(ctx, "fs/namespace.c", |content| sed_insert_after(content, "#include <linux/shmem_fs.h>", "#include <linux/mnt_idmapping.h>"))?;
+            edit_common(ctx, "fs/open.c", |content| sed_insert_after(content, "#include <linux/compat.h>", "#include <linux/mnt_idmapping.h>"))?;
             let path = ctx.common_dir().join("fs/notify/fdinfo.c");
             write(&path, &fdinfo_shim(&read(&path)?)?)?;
             ctx.log("susfs fake patch: a13-5.15 namespace/open/fdinfo");
         }
         if sublevel_ge(sublevel, 197) {
-            edit_common(ctx, "fs/namespace.c", |content| {
-                sed_delete_exact(content, "#include <trace/hooks/blk.h>")
-            })?;
-            edit_common(ctx, "fs/proc/task_mmu.c", |content| {
-                sed_delete_exact(content, "#include <trace/hooks/mm.h>")
-            })?;
+            edit_common(ctx, "fs/namespace.c", |content| sed_delete_exact(content, "#include <trace/hooks/blk.h>"))?;
+            edit_common(ctx, "fs/proc/task_mmu.c", |content| sed_delete_exact(content, "#include <trace/hooks/mm.h>"))?;
             ctx.log("susfs fake patch: a13-5.15 trace hook includes");
         }
     }
 
     if family == Family::Android14_6_1 {
         if sublevel_le(sublevel, 25) {
-            edit_common(ctx, "fs/proc/base.c", |content| {
-                sed_insert_after(
-                    content,
-                    "#include <trace/events/oom.h>",
-                    "#include <trace/hooks/sched.h>",
-                )
-            })?;
+            edit_common(ctx, "fs/proc/base.c", |content| sed_insert_after(content, "#include <trace/events/oom.h>", "#include <trace/hooks/sched.h>"))?;
         }
         if sublevel_le(sublevel, 141) {
-            edit_common(ctx, "fs/proc/base.c", |content| {
-                sed_insert_after(
-                    content,
-                    "#include <linux/cpufreq_times.h>",
-                    "#include <linux/dma-buf.h>",
-                )
-            })?;
+            edit_common(ctx, "fs/proc/base.c", |content| sed_insert_after(content, "#include <linux/cpufreq_times.h>", "#include <linux/dma-buf.h>"))?;
         }
         if sublevel_ge(sublevel, 157) {
-            edit_common(ctx, "fs/namespace.c", |content| {
-                sed_delete_exact(content, "#include <trace/hooks/blk.h>")
-            })?;
+            edit_common(ctx, "fs/namespace.c", |content| sed_delete_exact(content, "#include <trace/hooks/blk.h>"))?;
         }
         ctx.log("susfs fake patch: a14-6.1 includes");
     }
@@ -1635,24 +1337,20 @@ fn apply_susfs_fake_patches(ctx: &Ctx) -> Result<()> {
         if sublevel_le(sublevel, 30) {
             let path = ctx.common_dir().join("fs/proc/task_mmu.c");
             let content = read(&path)?;
-            let out = regex_sub_once(
-                &content,
-                r"(\t+\t\tif\s*\(\s*vma->vm_end\s*>\s*last_vma_end\s*\))\n(\t+\t\t\tsmap_gather_stats\(vma,\s*&mss,\s*last_vma_end\);)\n(\t+)\}",
-                |caps| {
-                    let mut s = String::new();
-                    s.push_str(&caps[1]);
-                    s.push_str(" {\n");
-                    s.push_str(&caps[2]);
-                    s.push('\n');
-                    s.push_str(&caps[3]);
-                    s.push_str("\t\tlast_vma_end = vma->vm_end;\n");
-                    s.push_str(&caps[3]);
-                    s.push_str("\t}\n");
-                    s.push_str(&caps[3]);
-                    s.push('}');
-                    s
-                },
-            )?;
+            let out = regex_sub_once(&content, r"(\t+\t\tif\s*\(\s*vma->vm_end\s*>\s*last_vma_end\s*\))\n(\t+\t\t\tsmap_gather_stats\(vma,\s*&mss,\s*last_vma_end\);)\n(\t+)\}", |caps| {
+                let mut s = String::new();
+                s.push_str(&caps[1]);
+                s.push_str(" {\n");
+                s.push_str(&caps[2]);
+                s.push('\n');
+                s.push_str(&caps[3]);
+                s.push_str("\t\tlast_vma_end = vma->vm_end;\n");
+                s.push_str(&caps[3]);
+                s.push_str("\t}\n");
+                s.push_str(&caps[3]);
+                s.push('}');
+                s
+            })?;
             write(&path, &out)?;
         }
         if sublevel_le(sublevel, 30) && ctx.os_patch_level == "2024-07" {
@@ -1660,44 +1358,24 @@ fn apply_susfs_fake_patches(ctx: &Ctx) -> Result<()> {
                 if content.contains("__fold_filemap_fixup_entry") {
                     return content.to_string();
                 }
-                sed_insert_before(
-                    content,
-                    "#include <asm/elf.h>",
-                    "#ifndef __fold_filemap_fixup_entry\nstatic inline void __fold_filemap_fixup_entry(struct vma_iterator *iter, unsigned long *end) { }\n#endif /* __fold_filemap_fixup_entry */",
-                )
+                sed_insert_before(content, "#include <asm/elf.h>", "#ifndef __fold_filemap_fixup_entry\nstatic inline void __fold_filemap_fixup_entry(struct vma_iterator *iter, unsigned long *end) { }\n#endif /* __fold_filemap_fixup_entry */")
             })?;
         }
         if sublevel_le(sublevel, 92) {
-            edit_common(ctx, "fs/proc/base.c", |content| {
-                sed_insert_after(
-                    content,
-                    "#include <linux/cpufreq_times.h>",
-                    "#include <linux/dma-buf.h>",
-                )
-            })?;
+            edit_common(ctx, "fs/proc/base.c", |content| sed_insert_after(content, "#include <linux/cpufreq_times.h>", "#include <linux/dma-buf.h>"))?;
         }
         if sublevel_le(sublevel, 57) {
-            edit_common(ctx, "mm/memory.c", |content| {
-                sed_insert_after(
-                    content,
-                    "#include <linux/sched/sysctl.h>",
-                    "#include <linux/zswap.h>",
-                )
-            })?;
+            edit_common(ctx, "mm/memory.c", |content| sed_insert_after(content, "#include <linux/sched/sysctl.h>", "#include <linux/zswap.h>"))?;
         }
         ctx.log("susfs fake patch: a15-6.6 includes");
     }
 
     if family == Family::Android16_6_12 {
         if sublevel_ge(sublevel, 58) {
-            edit_common(ctx, "fs/exec.c", |content| {
-                sed_delete_exact(content, "#include <linux/dma-buf.h>")
-            })?;
+            edit_common(ctx, "fs/exec.c", |content| sed_delete_exact(content, "#include <linux/dma-buf.h>"))?;
         }
         if sublevel_ge(sublevel, 69) {
-            edit_common(ctx, "fs/proc/task_mmu.c", |content| {
-                content.replace("vma_data_pages", "vma_pages")
-            })?;
+            edit_common(ctx, "fs/proc/task_mmu.c", |content| content.replace("vma_data_pages", "vma_pages"))?;
         }
         ctx.log("susfs fake patch: a16-6.12 dma-buf / vma_pages");
     }
@@ -1710,85 +1388,44 @@ fn revert_susfs_fake_patches(ctx: &Ctx) -> Result<()> {
     let sublevel = ctx.sublevel.as_str();
 
     if family == Family::Android12_5_10 && sublevel_le(sublevel, 43) {
-        edit_common(ctx, "fs/proc/base.c", |content| {
-            content.replace(
-                "size_t this_len = min_t(size_t, count, PAGE_SIZE);",
-                "int this_len = min_t(int, count, PAGE_SIZE);",
-            )
-        })?;
+        edit_common(ctx, "fs/proc/base.c", |content| content.replace("size_t this_len = min_t(size_t, count, PAGE_SIZE);", "int this_len = min_t(int, count, PAGE_SIZE);"))?;
     }
 
     if family == Family::Android13_5_15 {
         if sublevel_le(sublevel, 41) {
-            edit_common(ctx, "fs/namespace.c", |content| {
-                sed_delete_exact(content, "#include <linux/mnt_idmapping.h>")
-            })?;
-            edit_common(ctx, "fs/open.c", |content| {
-                sed_delete_exact(content, "#include <linux/mnt_idmapping.h>")
-            })?;
+            edit_common(ctx, "fs/namespace.c", |content| sed_delete_exact(content, "#include <linux/mnt_idmapping.h>"))?;
+            edit_common(ctx, "fs/open.c", |content| sed_delete_exact(content, "#include <linux/mnt_idmapping.h>"))?;
             edit_common(ctx, "fs/susfs.c", |content| {
-                let out = content.replace(
-                    "i_uid_into_mnt(i_user_ns(&fi->inode), &fi->inode).val",
-                    "i_uid_into_mnt(&init_user_ns, &fi->inode).val",
-                );
-                out.replace(
-                    "i_uid_into_mnt(i_user_ns(inode), inode).val",
-                    "i_uid_into_mnt(&init_user_ns, inode).val",
-                )
+                let out = content.replace("i_uid_into_mnt(i_user_ns(&fi->inode), &fi->inode).val", "i_uid_into_mnt(&init_user_ns, &fi->inode).val");
+                out.replace("i_uid_into_mnt(i_user_ns(inode), inode).val", "i_uid_into_mnt(&init_user_ns, inode).val")
             })?;
         }
         if sublevel_ge(sublevel, 197) {
-            edit_common(ctx, "fs/namespace.c", |content| {
-                sed_insert_after(
-                    content,
-                    "#include \"internal.h\"",
-                    "#include <trace/hooks/blk.h>",
-                )
-            })?;
+            edit_common(ctx, "fs/namespace.c", |content| sed_insert_after(content, "#include \"internal.h\"", "#include <trace/hooks/blk.h>"))?;
         }
         if sublevel_ge(sublevel, 206) {
-            edit_common(ctx, "fs/proc/task_mmu.c", |content| {
-                sed_insert_after(
-                    content,
-                    "#include <linux/pkeys.h>",
-                    "#include <trace/hooks/mm.h>",
-                )
-            })?;
+            edit_common(ctx, "fs/proc/task_mmu.c", |content| sed_insert_after(content, "#include <linux/pkeys.h>", "#include <trace/hooks/mm.h>"))?;
         }
     }
 
     if family == Family::Android14_6_1 {
         if sublevel_le(sublevel, 25) {
-            edit_common(ctx, "fs/proc/base.c", |content| {
-                sed_delete_exact(content, "#include <trace/hooks/sched.h>")
-            })?;
+            edit_common(ctx, "fs/proc/base.c", |content| sed_delete_exact(content, "#include <trace/hooks/sched.h>"))?;
         }
         if sublevel_le(sublevel, 141) {
-            edit_common(ctx, "fs/proc/base.c", |content| {
-                sed_delete_exact(content, "#include <linux/dma-buf.h>")
-            })?;
+            edit_common(ctx, "fs/proc/base.c", |content| sed_delete_exact(content, "#include <linux/dma-buf.h>"))?;
         }
         if sublevel_ge(sublevel, 157) {
-            edit_common(ctx, "fs/namespace.c", |content| {
-                sed_insert_after(
-                    content,
-                    "#include \"internal.h\"",
-                    "#include <trace/hooks/blk.h>",
-                )
-            })?;
+            edit_common(ctx, "fs/namespace.c", |content| sed_insert_after(content, "#include \"internal.h\"", "#include <trace/hooks/blk.h>"))?;
         }
     }
 
     if family == Family::Android15_6_6 {
         if sublevel_le(sublevel, 92) {
-            edit_common(ctx, "fs/proc/base.c", |content| {
-                sed_delete_exact(content, "#include <linux/dma-buf.h>")
-            })?;
+            edit_common(ctx, "fs/proc/base.c", |content| sed_delete_exact(content, "#include <linux/dma-buf.h>"))?;
         }
         if sublevel_le(sublevel, 57) {
-            edit_common(ctx, "mm/memory.c", |content| {
-                sed_delete_exact(content, "#include <linux/zswap.h>")
-            })?;
+            edit_common(ctx, "mm/memory.c", |content| sed_delete_exact(content, "#include <linux/zswap.h>"))?;
         }
     }
 
@@ -1803,10 +1440,7 @@ fn revert_susfs_fake_patches(ctx: &Ctx) -> Result<()> {
                 }
                 match content.find("#include ") {
                     Some(idx) => {
-                        let end = content[idx..]
-                            .find('\n')
-                            .map(|offset| idx + offset + 1)
-                            .unwrap_or(content.len());
+                        let end = content[idx..].find('\n').map(|offset| idx + offset + 1).unwrap_or(content.len());
                         let mut out = content[..end].to_string();
                         out.push_str("#include <linux/dma-buf.h>\n");
                         out.push_str(&content[end..]);
@@ -1817,31 +1451,15 @@ fn revert_susfs_fake_patches(ctx: &Ctx) -> Result<()> {
             })?;
         }
         if sublevel_ge(sublevel, 69) {
-            edit_common(ctx, "fs/proc/task_mmu.c", |content| {
-                content.replace("vma_pages", "vma_data_pages")
-            })?;
+            edit_common(ctx, "fs/proc/task_mmu.c", |content| content.replace("vma_pages", "vma_data_pages"))?;
         }
     }
 
     // `Apply show_pad Fix` — return early instead of jumping to the padded path
     // on trees that predate the page-size-migration feature.
-    let show_pad_fix = (family == Family::Android12_5_10 && sublevel_le(sublevel, 209))
-        || (family == Family::Android13_5_10
-            && sublevel_le(sublevel, 209)
-            && ctx.os_patch_level != "2024-05")
-        || (family == Family::Android13_5_15
-            && sublevel_le(sublevel, 148)
-            && ctx.os_patch_level != "2024-05")
-        || (family == Family::Android14_5_15
-            && sublevel_le(sublevel, 148)
-            && ctx.os_patch_level != "2024-05")
-        || (family == Family::Android14_6_1
-            && sublevel_le(sublevel, 75)
-            && ctx.os_patch_level != "2024-05");
+    let show_pad_fix = (family == Family::Android12_5_10 && sublevel_le(sublevel, 209)) || (family == Family::Android13_5_10 && sublevel_le(sublevel, 209) && ctx.os_patch_level != "2024-05") || (family == Family::Android13_5_15 && sublevel_le(sublevel, 148) && ctx.os_patch_level != "2024-05") || (family == Family::Android14_5_15 && sublevel_le(sublevel, 148) && ctx.os_patch_level != "2024-05") || (family == Family::Android14_6_1 && sublevel_le(sublevel, 75) && ctx.os_patch_level != "2024-05");
     if show_pad_fix {
-        edit_common(ctx, "fs/proc/task_mmu.c", |content| {
-            content.replace("goto show_pad;", "return 0;")
-        })?;
+        edit_common(ctx, "fs/proc/task_mmu.c", |content| content.replace("goto show_pad;", "return 0;"))?;
         ctx.log("susfs show_pad fix: applied");
     }
     Ok(())
@@ -1863,47 +1481,17 @@ fn fix_selinux_hide(ctx: &mut Ctx) -> Result<()> {
         let mut content = read(&path)?;
         if content.contains("extern void security_dump_masked_av_fn") {
             // Function form: `&fn != NULL` silences both warnings.
-            for (from, to) in [
-                (
-                    "if (security_dump_masked_av_fn)",
-                    "if (&security_dump_masked_av_fn)",
-                ),
-                (
-                    "if (security_dump_masked_av_fn != NULL)",
-                    "if (&security_dump_masked_av_fn != NULL)",
-                ),
-                (
-                    "if (context_struct_compute_av_fn)",
-                    "if (&context_struct_compute_av_fn)",
-                ),
-                (
-                    "if (context_struct_compute_av_fn != NULL)",
-                    "if (&context_struct_compute_av_fn != NULL)",
-                ),
-            ] {
+            for (from, to) in [("if (security_dump_masked_av_fn)", "if (&security_dump_masked_av_fn)"), ("if (security_dump_masked_av_fn != NULL)", "if (&security_dump_masked_av_fn != NULL)"), ("if (context_struct_compute_av_fn)", "if (&context_struct_compute_av_fn)"), ("if (context_struct_compute_av_fn != NULL)", "if (&context_struct_compute_av_fn != NULL)")] {
                 content = content.replace(from, to);
             }
         } else if content.contains("if (security_dump_masked_av_fn") {
-            for (from, to) in [
-                (
-                    "if (security_dump_masked_av_fn)",
-                    "if (security_dump_masked_av_fn != NULL)",
-                ),
-                (
-                    "if (context_struct_compute_av_fn)",
-                    "if (context_struct_compute_av_fn != NULL)",
-                ),
-            ] {
+            for (from, to) in [("if (security_dump_masked_av_fn)", "if (security_dump_masked_av_fn != NULL)"), ("if (context_struct_compute_av_fn)", "if (context_struct_compute_av_fn != NULL)")] {
                 content = content.replace(from, to);
             }
         }
         // 6.6 declares the helpers `static`, but they are referenced externally
         // after the SUSFS hooks land — drop `static` so the link resolves.
-        for name in [
-            "int security_context_to_sid_with_policy",
-            "int security_sid_to_context_with_policy",
-            "void security_compute_av_user_with_policy",
-        ] {
+        for name in ["int security_context_to_sid_with_policy", "int security_sid_to_context_with_policy", "void security_compute_av_user_with_policy"] {
             content = content.replace(&format!("\nstatic {name}"), &format!("\n{name}"));
             if content.starts_with(&format!("static {name}")) {
                 content = content.replacen(&format!("static {name}"), name, 1);
@@ -1912,10 +1500,7 @@ fn fix_selinux_hide(ctx: &mut Ctx) -> Result<()> {
         write(&path, &content)?;
         patched.push(pstr(&path));
     }
-    ctx.note(format!(
-        "selinux_hide fix: patched {} file(s)",
-        patched.len()
-    ));
+    ctx.note(format!("selinux_hide fix: patched {} file(s)", patched.len()));
     Ok(())
 }
 
@@ -1955,13 +1540,7 @@ fn setup_droidspaces(ctx: &mut Ctx) -> Result<()> {
     if dir.exists() {
         fs::remove_dir_all(&dir)?;
     }
-    retry(5, Duration::from_secs(5), |_| {
-        run(
-            &ws,
-            "git",
-            &["clone", "--depth=1", REPO_DROIDSPACES, &pstr(&dir)],
-        )
-    })?;
+    retry(5, Duration::from_secs(5), |_| run(&ws, "git", &["clone", "--depth=1", REPO_DROIDSPACES, &pstr(&dir)]))?;
     if let Some(pin) = &ctx.opts.droidspaces_commit {
         run(&dir, "git", &["fetch", "--depth=1", "origin", pin])?;
         run(&dir, "git", &["checkout", pin])?;
@@ -1976,16 +1555,12 @@ fn setup_droidspaces(ctx: &mut Ctx) -> Result<()> {
     let below = gki.join("below-kernel-6.12");
     let above_612 = gki.join("kernel-6.12/001.GKI-6.12-or-above-fix_sysvipc_kabi.patch");
     let below_678 = below.join("001.GKI-below-6.12-fix_sysvipc_kabi_6_7_8.patch");
-    let below_mqueue =
-        below.join("002.5.10_or_lower_use_android_abi_padding_for_posix_mqueue.patch");
+    let below_mqueue = below.join("002.5.10_or_lower_use_android_abi_padding_for_posix_mqueue.patch");
 
     let common = ctx.common_dir();
     match ctx.family {
         Family::Android16_6_12 => patch_file(&common, &above_612, &[])?,
-        Family::Android15_6_6
-        | Family::Android14_6_1
-        | Family::Android14_5_15
-        | Family::Android13_5_15 => patch_file(&common, &below_678, &[])?,
+        Family::Android15_6_6 | Family::Android14_6_1 | Family::Android14_5_15 | Family::Android13_5_15 => patch_file(&common, &below_678, &[])?,
         Family::Android12_5_10 | Family::Android13_5_10 => {
             patch_file(&common, &below_678, &[])?;
             patch_file(&common, &below_mqueue, &[])?;
@@ -1994,12 +1569,8 @@ fn setup_droidspaces(ctx: &mut Ctx) -> Result<()> {
 
     // 6.12 only: export the IPC symbols the runtime module links against.
     if ctx.family == Family::Android16_6_12 {
-        edit_common(ctx, "ipc/namespace.c", |content| {
-            append_line(&append_line(content, ""), "EXPORT_SYMBOL_GPL(put_ipc_ns);")
-        })?;
-        edit_common(ctx, "ipc/msgutil.c", |content| {
-            append_line(&append_line(content, ""), "EXPORT_SYMBOL_GPL(init_ipc_ns);")
-        })?;
+        edit_common(ctx, "ipc/namespace.c", |content| append_line(&append_line(content, ""), "EXPORT_SYMBOL_GPL(put_ipc_ns);"))?;
+        edit_common(ctx, "ipc/msgutil.c", |content| append_line(&append_line(content, ""), "EXPORT_SYMBOL_GPL(init_ipc_ns);"))?;
     }
 
     set_kernel_config(ctx, CFG_DROIDSPACES)
@@ -2021,11 +1592,7 @@ fn apply_ptrace_patch(ctx: &mut Ctx) -> Result<()> {
 
 /// Unicode path-traversal fix (split at 6.1, like the action).
 fn apply_unicode_fix(ctx: &mut Ctx) -> Result<()> {
-    let name = if ctx.family.is_older_than((5, 16)) {
-        "common/unicode_bypass_fix_6.1-.patch"
-    } else {
-        "common/unicode_bypass_fix_6.1+.patch"
-    };
+    let name = if ctx.family.is_older_than((5, 16)) { "common/unicode_bypass_fix_6.1-.patch" } else { "common/unicode_bypass_fix_6.1+.patch" };
     let patch = ctx.kernel_patches().join(name);
     patch_file(&ctx.common_dir(), &patch, &["--forward"])?;
     ctx.note(format!("unicode fix: applied ({name})"));
@@ -2052,19 +1619,14 @@ fn apply_device_patches(ctx: &mut Ctx) -> Result<()> {
     // Xiaomi: one extra symbol in the device symbol list.
     let symbol_list = ctx.common_dir().join("android/abi_gki_aarch64_xiaomi");
     let content = read(&symbol_list)?;
-    write(
-        &symbol_list,
-        &append_line(&content, "device_find_any_child"),
-    )?;
+    write(&symbol_list, &append_line(&content, "device_find_any_child"))?;
     ctx.note("xiaomi symbol list: device_find_any_child");
     Ok(())
 }
 
 fn apply_samsung_min_kdp(ctx: &mut Ctx) -> Result<()> {
     let common = ctx.common_dir();
-    let patch = ctx
-        .kernel_patches()
-        .join("samsung/min_kdp/add-min_kdp-symbols.patch");
+    let patch = ctx.kernel_patches().join("samsung/min_kdp/add-min_kdp-symbols.patch");
     let min_kdp = ctx.kernel_patches().join("samsung/min_kdp/min_kdp.c");
     if !patch.is_file() {
         bail!("missing Samsung min_kdp patch: {}", pstr(&patch));
@@ -2079,12 +1641,7 @@ fn apply_samsung_min_kdp(ctx: &mut Ctx) -> Result<()> {
         paths.insert(extra.to_string());
     }
     for path in &paths {
-        if path == "/dev/null"
-            || path.starts_with('/')
-            || path == ".."
-            || path.starts_with("../")
-            || path.contains("/../")
-        {
+        if path == "/dev/null" || path.starts_with('/') || path == ".." || path.starts_with("../") || path.contains("/../") {
             bail!("unsafe Samsung patch path: {path}");
         }
     }
@@ -2134,11 +1691,7 @@ fn apply_samsung_min_kdp(ctx: &mut Ctx) -> Result<()> {
 
     let list_path = common.join(symbol_list);
     let mut content = read(&list_path)?;
-    for symbol in [
-        "kdp_set_cred_non_rcu",
-        "kdp_usecount_dec_and_test",
-        "kdp_usecount_inc",
-    ] {
+    for symbol in ["kdp_set_cred_non_rcu", "kdp_usecount_dec_and_test", "kdp_usecount_inc"] {
         content = append_line(&content, symbol);
     }
     write(&list_path, &content)?;
@@ -2147,10 +1700,7 @@ fn apply_samsung_min_kdp(ctx: &mut Ctx) -> Result<()> {
     let drivers_makefile = common.join("drivers/Makefile");
     let makefile = read(&drivers_makefile)?;
     if !makefile.lines().any(|line| line == "obj-y += min_kdp.o") {
-        write(
-            &drivers_makefile,
-            &append_line(&makefile, "obj-y += min_kdp.o"),
-        )?;
+        write(&drivers_makefile, &append_line(&makefile, "obj-y += min_kdp.o"))?;
     }
     ctx.note("samsung min_kdp integration: applied");
     Ok(())
@@ -2169,10 +1719,7 @@ fn patch_target_paths(patch: &Path) -> Result<BTreeSet<String>> {
             continue;
         };
         let path = rest.split_whitespace().next().unwrap_or("");
-        let path = path
-            .strip_prefix("a/")
-            .or_else(|| path.strip_prefix("b/"))
-            .unwrap_or(path);
+        let path = path.strip_prefix("a/").or_else(|| path.strip_prefix("b/")).unwrap_or(path);
         if !path.is_empty() {
             paths.insert(path.to_string());
         }
@@ -2206,53 +1753,26 @@ fn stg_insert(src: &str) -> String {
     let elf2 = "elf_symbol {\n  id: 0x3037c5bc\n  name: \"kdp_usecount_dec_and_test\"\n  is_defined: true\n  symbol_type: FUNCTION\n  crc: 0xda582aa5\n  type_id: 0xc18e39fb\n  full_name: \"kdp_usecount_dec_and_test\"\n}\n";
     let elf3 = "elf_symbol {\n  id: 0x8334a496\n  name: \"kdp_usecount_inc\"\n  is_defined: true\n  symbol_type: FUNCTION\n  crc: 0xfb342499\n  type_id: 0x1fcd1693\n  full_name: \"kdp_usecount_inc\"\n}\n";
 
-    ensure_before(
-        "function {\n  id: 0x1e571002",
-        func1,
-        "id: 0x1e5195df",
-        &mut out,
-    );
-    ensure_before(
-        "function {\n  id: 0xc18f1240",
-        func2,
-        "id: 0xc18e39fb",
-        &mut out,
-    );
+    ensure_before("function {\n  id: 0x1e571002", func1, "id: 0x1e5195df", &mut out);
+    ensure_before("function {\n  id: 0xc18f1240", func2, "id: 0xc18e39fb", &mut out);
     let elf_anchor = "elf_symbol {\n  id: 0x493ce9fc\n  name: \"loops_per_jiffy\"";
-    for (block, label) in [
-        (elf1, "\"kdp_set_cred_non_rcu\""),
-        (elf2, "\"kdp_usecount_dec_and_test\""),
-        (elf3, "\"kdp_usecount_inc\""),
-    ] {
+    for (block, label) in [(elf1, "\"kdp_set_cred_non_rcu\""), (elf2, "\"kdp_usecount_dec_and_test\""), (elf3, "\"kdp_usecount_inc\"")] {
         ensure_before(elf_anchor, block, label, &mut out);
     }
 
     let iface_ids = ["0xb0801f6e", "0x3037c5bc", "0x8334a496"];
-    let missing: Vec<&str> = iface_ids
-        .iter()
-        .copied()
-        .filter(|id| !out.contains(&format!("symbol_id: {id}")))
-        .collect();
+    let missing: Vec<&str> = iface_ids.iter().copied().filter(|id| !out.contains(&format!("symbol_id: {id}"))).collect();
     if missing.is_empty() {
         println!("interface ids already present");
     } else {
         let anchor = "  symbol_id: 0xc750a072\n";
         if let Some(idx) = out.find(anchor) {
             let insert_at = idx + anchor.len();
-            let block: String = missing
-                .iter()
-                .map(|id| format!("  symbol_id: {id}\n"))
-                .collect();
+            let block: String = missing.iter().map(|id| format!("  symbol_id: {id}\n")).collect();
             out.insert_str(insert_at, &block);
         } else if let Some(idx) = out.find("interface {") {
-            let end = out[idx..]
-                .find("\n}\n")
-                .map(|off| idx + off)
-                .unwrap_or(out.len());
-            let block: String = missing
-                .iter()
-                .map(|id| format!("  symbol_id: {id}\n"))
-                .collect();
+            let end = out[idx..].find("\n}\n").map(|off| idx + off).unwrap_or(out.len());
+            let block: String = missing.iter().map(|id| format!("  symbol_id: {id}\n")).collect();
             out.insert_str(end, block.trim_end_matches('\n'));
         }
     }
@@ -2267,17 +1787,7 @@ fn stg_insert(src: &str) -> String {
 fn apply_kernel_branding(ctx: &Ctx) -> Result<()> {
     let path = ctx.common_dir().join("scripts/setlocalversion");
     let content = read(&path)?;
-    let line = if matches!(ctx.family, Family::Android15_6_6 | Family::Android16_6_12) {
-        format!(
-            "echo \"{}.{}-{}-{}\"",
-            ctx.family.kernel(),
-            ctx.sublevel,
-            ctx.family.android(),
-            ctx.opts.brand_name
-        )
-    } else {
-        format!("echo \"-{}-{}\"", ctx.family.android(), ctx.opts.brand_name)
-    };
+    let line = if matches!(ctx.family, Family::Android15_6_6 | Family::Android16_6_12) { format!("echo \"{}.{}-{}-{}\"", ctx.family.kernel(), ctx.sublevel, ctx.family.android(), ctx.opts.brand_name) } else { format!("echo \"-{}-{}\"", ctx.family.android(), ctx.opts.brand_name) };
     write(&path, &replace_last_line(&content, &line))?;
     chmod_exec(&path)?;
     Ok(())
@@ -2310,11 +1820,7 @@ fn remove_protected_exports(ctx: &mut Ctx) -> Result<()> {
     }
     if let Ok(entries) = fs::read_dir(&android_dir) {
         for entry in entries.flatten() {
-            if entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("abi_gki_protected_exports_")
-            {
+            if entry.file_name().to_string_lossy().starts_with("abi_gki_protected_exports_") {
                 bail!("abi_gki_protected_exports_* still exists after removal");
             }
         }
@@ -2333,9 +1839,7 @@ fn remove_protected_exports(ctx: &mut Ctx) -> Result<()> {
         let content = read(&modules_bzl)?;
         let re = Regex::new(r"(?m)^protected_modules = \[.*\]")?;
         if re.is_match(&content) {
-            let out = re
-                .replace_all(&content, "protected_modules = []")
-                .into_owned();
+            let out = re.replace_all(&content, "protected_modules = []").into_owned();
             if out == content {
                 bail!("common/modules.bzl was not modified");
             }
@@ -2362,12 +1866,8 @@ fn strip_protected_lists(bazel: &str) -> Result<(String, Vec<String>)> {
     let mut notes = Vec::new();
     let mut out = bazel.to_string();
 
-    let any_exports = Regex::new(
-        r#"(?m)^[ \t]*"protected_exports_list"[ \t]*:[ \t]*"android/abi_gki_protected_exports_[A-Za-z0-9_]+",[ \t]*\n?"#,
-    )?;
-    let aarch64_exports = Regex::new(
-        r#""protected_exports_list"[ \t]*:[ \t]*"android/abi_gki_protected_exports_aarch64""#,
-    )?;
+    let any_exports = Regex::new(r#"(?m)^[ \t]*"protected_exports_list"[ \t]*:[ \t]*"android/abi_gki_protected_exports_[A-Za-z0-9_]+",[ \t]*\n?"#)?;
+    let aarch64_exports = Regex::new(r#""protected_exports_list"[ \t]*:[ \t]*"android/abi_gki_protected_exports_aarch64""#)?;
 
     if aarch64_exports.is_match(&out) {
         let before = out.clone();
@@ -2384,23 +1884,16 @@ fn strip_protected_lists(bazel: &str) -> Result<(String, Vec<String>)> {
         out = any_exports.replace_all(&out, "").into_owned();
     }
     if out.contains("\"protected_exports_list\"") {
-        notes.push(
-            "warning: common/BUILD.bazel still references a protected exports list".to_string(),
-        );
+        notes.push("warning: common/BUILD.bazel still references a protected exports list".to_string());
     }
 
     // 6.12+ spells the protected module list differently from `modules.bzl`.
     if out.contains("protected_module_names_list") {
-        let specific = Regex::new(
-            r#"(?m)^[ \t]*protected_module_names_list[ \t]*=[ \t]*":gki_(?:aarch64|x86_64)_protected_module_names",[ \t]*\n?"#,
-        )?;
+        let specific = Regex::new(r#"(?m)^[ \t]*protected_module_names_list[ \t]*=[ \t]*":gki_(?:aarch64|x86_64)_protected_module_names",[ \t]*\n?"#)?;
         let before = out.clone();
         out = specific.replace_all(&out, "").into_owned();
         if out == before {
-            notes.push(
-                "warning: protected_module_names_list not matched in common/BUILD.bazel"
-                    .to_string(),
-            );
+            notes.push("warning: protected_module_names_list not matched in common/BUILD.bazel".to_string());
         } else {
             notes.push("protected_module_names_list entries removed (bazel)".to_string());
         }
@@ -2411,10 +1904,7 @@ fn strip_protected_lists(bazel: &str) -> Result<(String, Vec<String>)> {
             out = any.replace_all(&out, "").into_owned();
         }
         if out.contains("protected_module_names_list") {
-            notes.push(
-                "warning: common/BUILD.bazel still references protected_module_names_list"
-                    .to_string(),
-            );
+            notes.push("warning: common/BUILD.bazel still references protected_module_names_list".to_string());
         }
     }
     Ok((out, notes))
@@ -2432,16 +1922,7 @@ fn clean_kernel_flags(ctx: &Ctx) -> Result<()> {
         let stamp = kernel.join("build/kernel/kleaf/impl/stamp.bzl");
         if stamp.is_file() {
             let content = read(&stamp)?;
-            let out: String = content
-                .split_inclusive('\n')
-                .map(|line| {
-                    if line.contains("stable_scmversion_cmd") {
-                        line.replace("-maybe-dirty", "")
-                    } else {
-                        line.to_string()
-                    }
-                })
-                .collect();
+            let out: String = content.split_inclusive('\n').map(|line| if line.contains("stable_scmversion_cmd") { line.replace("-maybe-dirty", "") } else { line.to_string() }).collect();
             write(&stamp, &out)?;
         }
         let setlocalversion = kernel.join("common/scripts/setlocalversion");
@@ -2457,32 +1938,12 @@ fn clean_kernel_flags(ctx: &Ctx) -> Result<()> {
         return Ok(());
     }
     run(common.as_path(), "git", &["add", "."])?;
-    let staged = capture(
-        common.as_path(),
-        "git",
-        &["diff", "--cached", "--name-only"],
-    )?;
+    let staged = capture(common.as_path(), "git", &["diff", "--cached", "--name-only"])?;
     if staged.trim().is_empty() {
         ctx.log("clean kernel flags: nothing to commit");
         return Ok(());
     }
-    run_with_env(
-        common.as_path(),
-        "git",
-        &["commit", "-m", "Wild: Clean Dirty Flag"],
-        &[
-            ("GIT_AUTHOR_NAME", "github-actions[bot]".to_string()),
-            (
-                "GIT_AUTHOR_EMAIL",
-                "github-actions[bot]@users.noreply.github.com".to_string(),
-            ),
-            ("GIT_COMMITTER_NAME", "github-actions[bot]".to_string()),
-            (
-                "GIT_COMMITTER_EMAIL",
-                "github-actions[bot]@users.noreply.github.com".to_string(),
-            ),
-        ],
-    )
+    run_with_env(common.as_path(), "git", &["commit", "-m", "TrustGKI: Clean Dirty Flag"], &[("GIT_AUTHOR_NAME", "github-actions[bot]".to_string()), ("GIT_AUTHOR_EMAIL", "github-actions[bot]@users.noreply.github.com".to_string()), ("GIT_COMMITTER_NAME", "github-actions[bot]".to_string()), ("GIT_COMMITTER_EMAIL", "github-actions[bot]@users.noreply.github.com".to_string())])
 }
 
 // ---------------------------------------------------------------------------
@@ -2491,20 +1952,10 @@ fn clean_kernel_flags(ctx: &Ctx) -> Result<()> {
 
 /// Flip `bad_version:`'s `return 0;` to `return 1;` (opt-in only).
 fn apply_bypass_hack(ctx: &Ctx) -> Result<()> {
-    let target = if matches!(
-        ctx.family,
-        Family::Android14_6_1 | Family::Android15_6_6 | Family::Android16_6_12
-    ) {
-        ctx.common_dir().join("kernel/module/version.c")
-    } else {
-        ctx.common_dir().join("kernel/module.c")
-    };
+    let target = if matches!(ctx.family, Family::Android14_6_1 | Family::Android15_6_6 | Family::Android16_6_12) { ctx.common_dir().join("kernel/module/version.c") } else { ctx.common_dir().join("kernel/module.c") };
     let content = read(&target)?;
     let lines: Vec<&str> = content.split_inclusive('\n').collect();
-    let start = lines
-        .iter()
-        .position(|line| line.contains("bad_version:"))
-        .ok_or_else(|| anyhow::anyhow!("`bad_version:` not found in {}", pstr(&target)))?;
+    let start = lines.iter().position(|line| line.contains("bad_version:")).ok_or_else(|| anyhow::anyhow!("`bad_version:` not found in {}", pstr(&target)))?;
     let mut out = lines[..=start].concat();
     let mut patched = false;
     for (index, line) in lines.iter().enumerate().skip(start + 1) {
@@ -2542,33 +1993,12 @@ fn setup_ccache(ctx: &Ctx) -> Result<bool> {
     ctx.log("installing ccache from kernel_patches");
     let ws = &ctx.opts.workspace;
     let staged = ws.join("ccache");
-    if run(
-        ws,
-        "curl",
-        &[
-            "-LfsS",
-            "--retry",
-            "5",
-            "--retry-delay",
-            "5",
-            "--retry-all-errors",
-            "--connect-timeout",
-            "30",
-            "-H",
-            "User-Agent: Mozilla/5.0",
-            URL_CCACHE,
-            "-o",
-            &pstr(&staged),
-        ],
-    )
-    .is_err()
-    {
+    if run(ws, "curl", &["-LfsS", "--retry", "5", "--retry-delay", "5", "--retry-all-errors", "--connect-timeout", "30", "-H", "User-Agent: Mozilla/5.0", URL_CCACHE, "-o", &pstr(&staged)]).is_err() {
         return Ok(false);
     }
     chmod_exec(&staged)?;
     let target = Path::new("/usr/bin/ccache");
-    let copied = run(ws, "sudo", &["cp", "-f", &pstr(&staged), "/usr/bin/ccache"])
-        .and_then(|_| run(ws, "sudo", &["chmod", "+x", "/usr/bin/ccache"]));
+    let copied = run(ws, "sudo", &["cp", "-f", &pstr(&staged), "/usr/bin/ccache"]).and_then(|_| run(ws, "sudo", &["chmod", "+x", "/usr/bin/ccache"]));
     fs::remove_file(&staged).ok();
     if copied.is_err() {
         ctx.log("warning: could not install ccache; building without it");
@@ -2626,10 +2056,7 @@ fn disable_check_defconfig(content: &str) -> (String, usize) {
         if !line.contains("name = \"kernel_aarch64\",") {
             continue;
         }
-        let already_declared = lines
-            .get(index + 1)
-            .map(|next| next.trim() == "check_defconfig = \"disabled\",")
-            .unwrap_or(false);
+        let already_declared = lines.get(index + 1).map(|next| next.trim() == "check_defconfig = \"disabled\",").unwrap_or(false);
         if !already_declared {
             out.push_str("    check_defconfig = \"disabled\",\n");
             inserted += 1;
@@ -2642,14 +2069,7 @@ fn disable_check_defconfig(content: &str) -> (String, usize) {
 fn build_kernel(ctx: &mut Ctx) -> Result<()> {
     let kernel = ctx.kernel_dir();
     let common = ctx.common_dir();
-    ctx.log(format!(
-        "── build kernel ({})",
-        if ctx.uses_bazel() {
-            "bazel/kleaf"
-        } else {
-            "build.sh"
-        }
-    ));
+    ctx.log(format!("── build kernel ({})", if ctx.uses_bazel() { "bazel/kleaf" } else { "build.sh" }));
 
     // `Build Kernel` drops `check_defconfig` from the legacy config chain.
     for name in ["build.config.gki", "build.config.gki.aarch64"] {
@@ -2664,37 +2084,15 @@ fn build_kernel(ctx: &mut Ctx) -> Result<()> {
 
     let out_dir = ctx.out_dir();
     fs::create_dir_all(&out_dir)?;
-    let mut env = vec![
-        ("SOURCE_DATE_EPOCH", ctx.source_date_epoch.to_string()),
-        ("KBUILD_BUILD_TIMESTAMP", ctx.kbuild_timestamp.clone()),
-        ("GIT_AUTHOR_DATE", ctx.git_date.clone()),
-        ("GIT_COMMITTER_DATE", ctx.git_date.clone()),
-    ];
+    let mut env = vec![("SOURCE_DATE_EPOCH", ctx.source_date_epoch.to_string()), ("KBUILD_BUILD_TIMESTAMP", ctx.kbuild_timestamp.clone()), ("GIT_AUTHOR_DATE", ctx.git_date.clone()), ("GIT_COMMITTER_DATE", ctx.git_date.clone())];
 
     if !ctx.uses_bazel() {
         let use_ccache = ctx.opts.use_cache && setup_ccache(ctx)?;
-        env.extend([
-            ("BUILD_GKI_ARTIFACTS", String::new()),
-            ("BUILD_GKI_CERTIFICATION_TOOLS", "0".to_string()),
-            ("BUILD_SYSTEM_DLKM", "0".to_string()),
-            ("SKIP_VENDOR_BOOT", "1".to_string()),
-            ("SKIP_EXT_MODULES", "1".to_string()),
-            ("SKIP_CP_KERNEL_HDR", "1".to_string()),
-            ("OUT_DIR", pstr(&out_dir)),
-            ("LTO", "thin".to_string()),
-            (
-                "BUILD_CONFIG",
-                "common/build.config.gki.aarch64".to_string(),
-            ),
-        ]);
+        env.extend([("BUILD_GKI_ARTIFACTS", String::new()), ("BUILD_GKI_CERTIFICATION_TOOLS", "0".to_string()), ("BUILD_SYSTEM_DLKM", "0".to_string()), ("SKIP_VENDOR_BOOT", "1".to_string()), ("SKIP_EXT_MODULES", "1".to_string()), ("SKIP_CP_KERNEL_HDR", "1".to_string()), ("OUT_DIR", pstr(&out_dir)), ("LTO", "thin".to_string()), ("BUILD_CONFIG", "common/build.config.gki.aarch64".to_string())]);
         if use_ccache {
             env.extend(ccache_env(ctx));
             for key in ["CC", "CXX", "HOSTCC", "HOSTCXX"] {
-                let value = if key.ends_with("CXX") {
-                    "/usr/bin/ccache clang++"
-                } else {
-                    "/usr/bin/ccache clang"
-                };
+                let value = if key.ends_with("CXX") { "/usr/bin/ccache clang++" } else { "/usr/bin/ccache clang" };
                 env.push((key, value.to_string()));
             }
         }
@@ -2707,60 +2105,28 @@ fn build_kernel(ctx: &mut Ctx) -> Result<()> {
         let (patched, inserted) = disable_check_defconfig(&content);
         if inserted > 0 {
             write(&build_bazel, &patched)?;
-            ctx.log(format!(
-                "check_defconfig disabled for {inserted} kernel_aarch64 target(s)"
-            ));
+            ctx.log(format!("check_defconfig disabled for {inserted} kernel_aarch64 target(s)"));
         } else if content.contains("check_defconfig") {
-            ctx.note(
-                "warning: could not disable check_defconfig for kernel_aarch64 in BUILD.bazel"
-                    .to_string(),
-            );
+            ctx.note("warning: could not disable check_defconfig for kernel_aarch64 in BUILD.bazel".to_string());
         }
         let disk_cache = format!("--disk_cache={}", pstr(&ctx.opts.bazel_cache));
-        run_with_env(
-            kernel.as_path(),
-            "tools/bazel",
-            &[
-                "build",
-                "--config=fast",
-                &disk_cache,
-                "//common:kernel_aarch64/Image",
-            ],
-            &env,
-        )?;
+        run_with_env(kernel.as_path(), "tools/bazel", &["build", "--config=fast", &disk_cache, "//common:kernel_aarch64/Image"], &env)?;
     }
     Ok(())
 }
 
 /// `Gather Build Artifacts` — copy `Image` into the AnyKernel3 checkout.
 fn gather_artifacts(ctx: &Ctx) -> Result<PathBuf> {
-    let candidates = [
-        ctx.kernel_dir()
-            .join("bazel-bin/common/kernel_aarch64/Image"),
-        ctx.out_dir().join("dist/Image"),
-        ctx.out_dir().join("Image"),
-    ];
+    let candidates = [ctx.kernel_dir().join("bazel-bin/common/kernel_aarch64/Image"), ctx.out_dir().join("dist/Image"), ctx.out_dir().join("Image")];
     for candidate in candidates {
         if candidate.is_file() {
             let destination = ctx.any_kernel3().join("Image");
-            fs::copy(&candidate, &destination)
-                .with_context(|| format!("cannot copy {}", pstr(&candidate)))?;
-            ctx.log(format!(
-                "artifact: {} -> {}",
-                pstr(&candidate),
-                pstr(&destination)
-            ));
+            fs::copy(&candidate, &destination).with_context(|| format!("cannot copy {}", pstr(&candidate)))?;
+            ctx.log(format!("artifact: {} -> {}", pstr(&candidate), pstr(&destination)));
             return Ok(destination);
         }
     }
-    bail!(
-        "no kernel Image produced (looked in {} and {})",
-        pstr(
-            &ctx.kernel_dir()
-                .join("bazel-bin/common/kernel_aarch64/Image")
-        ),
-        pstr(&ctx.out_dir().join("dist/Image"))
-    )
+    bail!("no kernel Image produced (looked in {} and {})", pstr(&ctx.kernel_dir().join("bazel-bin/common/kernel_aarch64/Image")), pstr(&ctx.out_dir().join("dist/Image")))
 }
 
 // ---------------------------------------------------------------------------
@@ -2775,10 +2141,7 @@ fn gather_artifacts(ctx: &Ctx) -> Result<PathBuf> {
 /// published as "KernelSU-Next + SUSFS" without the options actually set.
 fn verify_kernel_config(ctx: &mut Ctx) {
     let mut configs = Vec::new();
-    for root in [
-        ctx.kernel_dir().join("out"),
-        ctx.kernel_dir().join("bazel-bin"),
-    ] {
+    for root in [ctx.kernel_dir().join("out"), ctx.kernel_dir().join("bazel-bin")] {
         if !root.is_dir() {
             continue;
         }
@@ -2797,22 +2160,11 @@ fn verify_kernel_config(ctx: &mut Ctx) {
         ctx.note("kernel config check: no built .config found (skipped)");
         return;
     }
-    let ksu = configs
-        .iter()
-        .find(|(_, content)| content.contains("CONFIG_KSU=y"));
-    let susfs = configs
-        .iter()
-        .find(|(_, content)| content.contains("CONFIG_KSU_SUSFS=y"));
+    let ksu = configs.iter().find(|(_, content)| content.contains("CONFIG_KSU=y"));
+    let susfs = configs.iter().find(|(_, content)| content.contains("CONFIG_KSU_SUSFS=y"));
     match (ksu, susfs) {
-        (Some((ksu_path, _)), Some(_)) => ctx.note(format!(
-            "kernel config check: CONFIG_KSU=y and CONFIG_KSU_SUSFS=y (in {})",
-            pstr(ksu_path)
-        )),
-        _ => ctx.note(format!(
-            "WARNING: kernel config check failed — CONFIG_KSU=y found: {}, CONFIG_KSU_SUSFS=y found: {}",
-            ksu.is_some(),
-            susfs.is_some()
-        )),
+        (Some((ksu_path, _)), Some(_)) => ctx.note(format!("kernel config check: CONFIG_KSU=y and CONFIG_KSU_SUSFS=y (in {})", pstr(ksu_path))),
+        _ => ctx.note(format!("WARNING: kernel config check failed — CONFIG_KSU=y found: {}, CONFIG_KSU_SUSFS=y found: {}", ksu.is_some(), susfs.is_some())),
     }
 }
 
@@ -2840,10 +2192,7 @@ fn scan_patch_rejects(ctx: &Ctx) -> Result<usize> {
         if original.is_file() {
             fs::copy(&original, destination.with_extension(""))?;
         }
-        let mut index = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(rejects.join("index.txt"))?;
+        let mut index = fs::OpenOptions::new().create(true).append(true).open(rejects.join("index.txt"))?;
         writeln!(index, "{}", relative.display())?;
         count += 1;
     }
@@ -2900,37 +2249,14 @@ fn susfs_version(ctx: &Ctx) -> String {
 fn write_summary(ctx: &Ctx, image: &Path, rejects: usize) -> Result<()> {
     let output = &ctx.opts.output_dir;
     fs::create_dir_all(output)?;
-    let version_string = capture(
-        output,
-        "sh",
-        &[
-            "-c",
-            &format!(
-                "strings {} | grep -m1 '^Linux version ' | sed 's/Linux version //' || true",
-                pstr(image)
-            ),
-        ],
-    )
-    .unwrap_or_default();
+    let version_string = capture(output, "sh", &["-c", &format!("strings {} | grep -m1 '^Linux version ' | sed 's/Linux version //' || true", pstr(image))]).unwrap_or_default();
     let susfs_ver = susfs_version(ctx);
 
     let mut summary = String::new();
-    summary.push_str(&format!(
-        "## {} {} ({}) - {} release\n\n",
-        ctx.family.android(),
-        ctx.family.kernel(),
-        ctx.sublevel,
-        ctx.opts.variant
-    ));
+    summary.push_str(&format!("## {} {} ({}) - {} release\n\n", ctx.family.android(), ctx.family.kernel(), ctx.sublevel, ctx.opts.variant));
     summary.push_str("| Metric | Value |\n|--------|-------|\n");
     summary.push_str("| **Status** | [+] Success |\n");
-    summary.push_str(&format!(
-        "| **Kernel** | {}.{}-{}-{} |\n",
-        ctx.family.kernel(),
-        ctx.sublevel,
-        ctx.family.android(),
-        ctx.os_patch_level
-    ));
+    summary.push_str(&format!("| **Kernel** | {}.{}-{}-{} |\n", ctx.family.kernel(), ctx.sublevel, ctx.family.android(), ctx.os_patch_level));
     if !version_string.is_empty() {
         summary.push_str(&format!("| **Version String** | `{version_string}` |\n"));
     }
@@ -2939,20 +2265,11 @@ fn write_summary(ctx: &Ctx, image: &Path, rejects: usize) -> Result<()> {
     summary.push_str(&format!("| **Root Remote** | {} |\n", ctx.root_repo));
     summary.push_str(&format!("| **SUSFS Version** | {susfs_ver} |\n"));
     summary.push_str(&format!("| **SUSFS Commit** | {} |\n", ctx.susfs_sha));
-    summary.push_str(&format!(
-        "| **DroidSpaces (LXC) Commit** | {} |\n",
-        ctx.droidspaces_sha
-    ));
-    summary.push_str(&format!(
-        "| **Kernel Source Commit** | {} |\n",
-        ctx.kernel_sha
-    ));
+    summary.push_str(&format!("| **DroidSpaces (LXC) Commit** | {} |\n", ctx.droidspaces_sha));
+    summary.push_str(&format!("| **Kernel Source Commit** | {} |\n", ctx.kernel_sha));
     summary.push_str("| **Feature Set** | SUSFS+DS+KernelSU-Next |\n");
     summary.push_str(&format!("| **Patch Rejects** | {rejects} |\n"));
-    summary.push_str(&format!(
-        "| **SOURCE_DATE_EPOCH** | {} |\n",
-        ctx.source_date_epoch
-    ));
+    summary.push_str(&format!("| **SOURCE_DATE_EPOCH** | {} |\n", ctx.source_date_epoch));
     summary.push_str(&format!("| **Image** | {} |\n", pstr(image)));
     if !ctx.notes.is_empty() {
         summary.push_str("\n### Applied Fixes\n\n");
@@ -2994,18 +2311,13 @@ fn write_summary(ctx: &Ctx, image: &Path, rejects: usize) -> Result<()> {
         "patch_rejects": rejects,
         "source_date_epoch": ctx.source_date_epoch,
     });
-    write(
-        &output.join(format!("{}-metadata.json", ctx.file_name)),
-        &serde_json::to_string_pretty(&metadata)?,
-    )?;
+    write(&output.join(format!("{}-metadata.json", ctx.file_name)), &serde_json::to_string_pretty(&metadata)?)?;
 
     // Best-effort flashable package, mirroring the release packaging step.
     let zip_path = output.join(format!("{}-AnyKernel3.zip", ctx.file_name));
     let zip_result = run(&ctx.any_kernel3(), "zip", &["-qr", &pstr(&zip_path), "."]);
     if let Err(err) = zip_result {
-        ctx.log(format!(
-            "warning: could not create AnyKernel3 zip ({err:#})"
-        ));
+        ctx.log(format!("warning: could not create AnyKernel3 zip ({err:#})"));
     }
     ctx.log(format!("summary: {}", pstr(&summary_path)));
     Ok(())
@@ -3039,19 +2351,9 @@ impl Ctx {
 }
 
 /// `build.yml`, in order, restricted to GKI + LXC + KernelSU-Next + SUSFS.
-fn build_target(
-    opts: &Options,
-    family: Family,
-    sublevel_input: String,
-    os_patch_level: String,
-) -> Result<()> {
+fn build_target(opts: &Options, family: Family, sublevel_input: String, os_patch_level: String) -> Result<()> {
     let mut ctx = Ctx::new(opts.clone(), family, sublevel_input, os_patch_level);
-    say(&format!(
-        "\n=== {} | patch level {} | variant {} ===",
-        ctx.family.id(),
-        ctx.os_patch_level,
-        ctx.opts.variant
-    ));
+    say(&format!("\n=== {} | patch level {} | variant {} ===", ctx.family.id(), ctx.os_patch_level, ctx.opts.variant));
 
     setup_build_environment(&ctx)?;
     empty_dir(&ctx.kernel_dir())?;
@@ -3113,39 +2415,20 @@ struct Target {
 /// every entry yields a `Normal` target, plus one target per extra entry
 /// variant — unless a specific variant was requested, in which case every entry
 /// is labelled with it. The `os_patch_level` filter then narrows the result.
-fn targets_from_config(
-    config: &Path,
-    filter: &str,
-    requested_variant: &str,
-) -> Result<Vec<Target>> {
-    let content = fs::read_to_string(config)
-        .with_context(|| format!("config file not found: {}", pstr(config)))?;
-    let parsed: ConfigFile = serde_json::from_str(&content)
-        .with_context(|| format!("invalid config {}", pstr(config)))?;
+fn targets_from_config(config: &Path, filter: &str, requested_variant: &str) -> Result<Vec<Target>> {
+    let content = fs::read_to_string(config).with_context(|| format!("config file not found: {}", pstr(config)))?;
+    let parsed: ConfigFile = serde_json::from_str(&content).with_context(|| format!("invalid config {}", pstr(config)))?;
     let family = Family::parse(&parsed.version)?;
     let filter = filter.trim().to_lowercase();
-    let filter = if filter == PATCH_LEVEL_ALL {
-        ""
-    } else {
-        &filter
-    };
-    let requested = if requested_variant == "Normal" {
-        ""
-    } else {
-        requested_variant
-    };
+    let filter = if filter == PATCH_LEVEL_ALL { "" } else { &filter };
+    let requested = if requested_variant == "Normal" { "" } else { requested_variant };
 
     let mut targets = Vec::new();
     let mut seen: BTreeSet<(String, String, String)> = BTreeSet::new();
     let mut push = |sublevel: &str, date: &str, variant: &str, targets: &mut Vec<Target>| {
         let key = (sublevel.to_string(), date.to_string(), variant.to_string());
         if seen.insert(key) {
-            targets.push(Target {
-                family,
-                sublevel: sublevel.to_string(),
-                os_patch_level: date.to_string(),
-                variant: variant.to_string(),
-            });
+            targets.push(Target { family, sublevel: sublevel.to_string(), os_patch_level: date.to_string(), variant: variant.to_string() });
         }
     };
     for entry in &parsed.include {
@@ -3160,19 +2443,8 @@ fn targets_from_config(
     }
 
     if !filter.is_empty() {
-        let by_date: Vec<Target> = targets
-            .iter()
-            .filter(|t| t.os_patch_level.to_lowercase() == filter)
-            .cloned()
-            .collect();
-        targets = if by_date.is_empty() {
-            targets
-                .into_iter()
-                .filter(|t| t.sublevel == filter)
-                .collect()
-        } else {
-            by_date
-        };
+        let by_date: Vec<Target> = targets.iter().filter(|t| t.os_patch_level.to_lowercase() == filter).cloned().collect();
+        targets = if by_date.is_empty() { targets.into_iter().filter(|t| t.sublevel == filter).collect() } else { by_date };
     }
     if targets.is_empty() {
         bail!("no build targets match patch level '{filter}'");
@@ -3181,20 +2453,9 @@ fn targets_from_config(
 }
 
 fn resolve_options(args: &BuildArgs) -> Options {
-    let workspace = args
-        .workspace
-        .clone()
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let output_dir = args
-        .output_dir
-        .clone()
-        .unwrap_or_else(|| workspace.join("out"));
-    let bazel_cache = args.bazel_cache.clone().unwrap_or_else(|| {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| workspace.clone())
-            .join(".cache/bazel")
-    });
+    let workspace = args.workspace.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let output_dir = args.output_dir.clone().unwrap_or_else(|| workspace.join("out"));
+    let bazel_cache = args.bazel_cache.clone().unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| workspace.clone()).join(".cache/bazel"));
     Options {
         workspace,
         output_dir,
@@ -3229,38 +2490,23 @@ fn run_build(args: BuildArgs) -> Result<()> {
     let no_patch_filter = args.os_patch_level.trim().is_empty();
     let targets = if let Some(config) = &args.config {
         // Like `main.yml`: an unset patch level means "everything".
-        let filter = if no_patch_filter {
-            PATCH_LEVEL_ALL
-        } else {
-            args.os_patch_level.as_str()
-        };
+        let filter = if no_patch_filter { PATCH_LEVEL_ALL } else { args.os_patch_level.as_str() };
         targets_from_config(config, filter, &args.variant)?
     } else {
-        let version = args
-            .version
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("--version is required when --config is not used"))?;
+        let version = args.version.as_deref().ok_or_else(|| anyhow::anyhow!("--version is required when --config is not used"))?;
         let family = Family::parse(version)?;
         vec![Target {
             family,
-            sublevel: args
-                .sublevel
-                .clone()
-                .unwrap_or_else(|| SUBLEVEL_LTS.to_string()),
+            sublevel: args.sublevel.clone().unwrap_or_else(|| SUBLEVEL_LTS.to_string()),
             // An unset patch level builds the current LTS tip of the family.
-            os_patch_level: if no_patch_filter {
-                "lts".to_string()
-            } else {
-                args.os_patch_level.clone()
-            },
+            os_patch_level: if no_patch_filter { "lts".to_string() } else { args.os_patch_level.clone() },
             variant: args.variant.clone(),
         }]
     };
 
     say(&format!("targets   : {}", targets.len()));
     for target in targets {
-        build_target(&opts, target.family, target.sublevel, target.os_patch_level)
-            .with_context(|| format!("build failed for {}", target.family.id()))?;
+        build_target(&opts, target.family, target.sublevel, target.os_patch_level).with_context(|| format!("build failed for {}", target.family.id()))?;
     }
     Ok(())
 }
@@ -3276,13 +2522,7 @@ fn main() -> Result<()> {
                 (None, None) => bail!("either --config or --version is required"),
             };
             for target in targets_from_config(&config, &args.os_patch_level, "Normal")? {
-                println!(
-                    "{}\tsublevel={}\tpatch-level={}\tvariant={}",
-                    target.family.id(),
-                    target.sublevel,
-                    target.os_patch_level,
-                    target.variant
-                );
+                println!("{}\tsublevel={}\tpatch-level={}\tvariant={}", target.family.id(), target.sublevel, target.os_patch_level, target.variant);
             }
             Ok(())
         }
@@ -3311,21 +2551,9 @@ mod tests {
     #[test]
     fn sed_helpers_match_sed_semantics() {
         let content = "a\n// needle\nb\n// needle\nc\n";
-        assert_eq!(
-            sed_insert_after(content, "needle", "ins"),
-            "a\n// needle\nins\nb\n// needle\nins\nc\n"
-        );
-        assert_eq!(
-            sed_insert_before(content, "needle", "ins"),
-            "a\nins\n// needle\nb\nins\n// needle\nc\n"
-        );
-        assert_eq!(
-            sed_delete_exact(
-                "#include <linux/pkeys.h>\n#include <linux/pkeys.h.x>\n",
-                "#include <linux/pkeys.h>"
-            ),
-            "#include <linux/pkeys.h.x>\n"
-        );
+        assert_eq!(sed_insert_after(content, "needle", "ins"), "a\n// needle\nins\nb\n// needle\nins\nc\n");
+        assert_eq!(sed_insert_before(content, "needle", "ins"), "a\nins\n// needle\nb\nins\n// needle\nc\n");
+        assert_eq!(sed_delete_exact("#include <linux/pkeys.h>\n#include <linux/pkeys.h.x>\n", "#include <linux/pkeys.h>"), "#include <linux/pkeys.h.x>\n");
     }
 
     #[test]
@@ -3384,30 +2612,10 @@ static void inotify_fdinfo"
     fn this_len_upgrade_only_when_types_match() {
         let pattern = r"(int|size_t)\s+this_len\s*=\s*min_t\s*\(\s*(int|size_t)\s*,";
         let upgrade = |caps: &regex::Captures<'_>| {
-            if caps[1] == caps[2] {
-                Some("size_t this_len = min_t(size_t,".to_string())
-            } else {
-                None
-            }
+            if caps[1] == caps[2] { Some("size_t this_len = min_t(size_t,".to_string()) } else { None }
         };
-        assert_eq!(
-            regex_replace(
-                "int this_len = min_t(int, count, PAGE_SIZE);",
-                pattern,
-                upgrade
-            )
-            .unwrap(),
-            "size_t this_len = min_t(size_t, count, PAGE_SIZE);"
-        );
-        assert_eq!(
-            regex_replace(
-                "size_t this_len = min_t(int, count, PAGE_SIZE);",
-                pattern,
-                upgrade
-            )
-            .unwrap(),
-            "size_t this_len = min_t(int, count, PAGE_SIZE);"
-        );
+        assert_eq!(regex_replace("int this_len = min_t(int, count, PAGE_SIZE);", pattern, upgrade).unwrap(), "size_t this_len = min_t(size_t, count, PAGE_SIZE);");
+        assert_eq!(regex_replace("size_t this_len = min_t(int, count, PAGE_SIZE);", pattern, upgrade).unwrap(), "size_t this_len = min_t(int, count, PAGE_SIZE);");
     }
 
     #[test]
@@ -3416,24 +2624,20 @@ static void inotify_fdinfo"
         let input = "\t\t\tif (vma->vm_end > last_vma_end)\n\
 \t\t\t\tsmap_gather_stats(vma, &mss, last_vma_end);\n\
 \t}\n";
-        let out = regex_sub_once(
-            input,
-            r"(\t+\t\tif\s*\(\s*vma->vm_end\s*>\s*last_vma_end\s*\))\n(\t+\t\t\tsmap_gather_stats\(vma,\s*&mss,\s*last_vma_end\);)\n(\t+)\}",
-            |caps| {
-                let mut s = String::new();
-                s.push_str(&caps[1]);
-                s.push_str(" {\n");
-                s.push_str(&caps[2]);
-                s.push('\n');
-                s.push_str(&caps[3]);
-                s.push_str("\t\tlast_vma_end = vma->vm_end;\n");
-                s.push_str(&caps[3]);
-                s.push_str("\t}\n");
-                s.push_str(&caps[3]);
-                s.push('}');
-                s
-            },
-        )
+        let out = regex_sub_once(input, r"(\t+\t\tif\s*\(\s*vma->vm_end\s*>\s*last_vma_end\s*\))\n(\t+\t\t\tsmap_gather_stats\(vma,\s*&mss,\s*last_vma_end\);)\n(\t+)\}", |caps| {
+            let mut s = String::new();
+            s.push_str(&caps[1]);
+            s.push_str(" {\n");
+            s.push_str(&caps[2]);
+            s.push('\n');
+            s.push_str(&caps[3]);
+            s.push_str("\t\tlast_vma_end = vma->vm_end;\n");
+            s.push_str(&caps[3]);
+            s.push_str("\t}\n");
+            s.push_str(&caps[3]);
+            s.push('}');
+            s
+        })
         .unwrap();
         assert_eq!(
             out,
@@ -3477,11 +2681,7 @@ interface {\n  symbol_id: 0xc750a072\n}\n";
         let paths = patch_target_paths(&patch).unwrap();
         assert!(paths.contains("android/abi_gki_aarch64.stg"));
         assert!(paths.contains("drivers/Makefile"));
-        assert!(
-            !paths
-                .iter()
-                .any(|p| p.starts_with("a/") || p.starts_with("b/"))
-        );
+        assert!(!paths.iter().any(|p| p.starts_with("a/") || p.starts_with("b/")));
         fs::remove_file(&patch).ok();
     }
 
@@ -3508,25 +2708,10 @@ interface {\n  symbol_id: 0xc750a072\n}\n";
     fn supported_families_match_the_workflow_matrix() {
         let ids: Vec<&str> = Family::ALL.iter().map(|family| family.id()).collect();
         assert_eq!(ids.len(), 7);
-        assert_eq!(
-            ids,
-            vec![
-                "android12-5.10",
-                "android13-5.10",
-                "android13-5.15",
-                "android14-5.15",
-                "android14-6.1",
-                "android15-6.6",
-                "android16-6.12",
-            ]
-        );
+        assert_eq!(ids, vec!["android12-5.10", "android13-5.10", "android13-5.15", "android14-5.15", "android14-6.1", "android15-6.6", "android16-6.12",]);
         // Every supported family must have a config JSON to expand.
         for family in Family::ALL {
-            assert!(
-                family.config_file().is_file(),
-                "missing {}",
-                family.config_file().display()
-            );
+            assert!(family.config_file().is_file(), "missing {}", family.config_file().display());
         }
     }
 
@@ -3551,12 +2736,7 @@ interface {\n  symbol_id: 0xc750a072\n}\n";
         assert!(!out.contains("abi_gki_protected_exports_"));
         // protected_modules_list is untouched (modules.bzl own that check).
         assert_eq!(out.matches("protected_modules_list").count(), 2);
-        assert!(
-            notes
-                .iter()
-                .any(|n| n.contains("protected_exports_list entries removed")),
-            "notes: {notes:?}"
-        );
+        assert!(notes.iter().any(|n| n.contains("protected_exports_list entries removed")), "notes: {notes:?}");
         // Running again is a no-op and must not fail.
         let (again, _) = strip_protected_lists(&out).unwrap();
         assert_eq!(again, out);
@@ -3577,12 +2757,7 @@ kernel_build(
 "#;
         let (out, notes) = strip_protected_lists(src).unwrap();
         assert!(!out.contains("protected_module_names_list"));
-        assert!(
-            notes
-                .iter()
-                .any(|n| n.contains("protected_module_names_list entries removed")),
-            "notes: {notes:?}"
-        );
+        assert!(notes.iter().any(|n| n.contains("protected_module_names_list entries removed")), "notes: {notes:?}");
         let (again, _) = strip_protected_lists(&out).unwrap();
         assert_eq!(again, out);
     }
@@ -3603,9 +2778,7 @@ kernel_build(
         let src = "common_kernel(\n    name = \"kernel_aarch64\",\n    arch = \"arm64\",\n)\n\ncommon_kernel(\n    name = \"kernel_aarch64_tv\",\n    check_defconfig = \"disabled\",\n    arch = \"arm64\",\n)\n";
         let (out, inserted) = disable_check_defconfig(src);
         assert_eq!(inserted, 1, "out:\n{out}");
-        assert!(
-            out.contains("    name = \"kernel_aarch64\",\n    check_defconfig = \"disabled\",\n")
-        );
+        assert!(out.contains("    name = \"kernel_aarch64\",\n    check_defconfig = \"disabled\",\n"));
         // The tv target keeps exactly its own single declaration.
         assert_eq!(out.matches("check_defconfig = \"disabled\",").count(), 2);
         // Idempotent.
@@ -3634,11 +2807,7 @@ kernel_build(
         fs::create_dir_all(built.parent().unwrap()).unwrap();
         fs::write(&built, "CONFIG_KSU=y\nCONFIG_KSU_SUSFS=y\n").unwrap();
         verify_kernel_config(&mut ctx);
-        assert!(
-            ctx.notes.iter().any(|n| n.contains("CONFIG_KSU_SUSFS=y")),
-            "notes: {:?}",
-            ctx.notes
-        );
+        assert!(ctx.notes.iter().any(|n| n.contains("CONFIG_KSU_SUSFS=y")), "notes: {:?}", ctx.notes);
 
         // A config without the options must be reported as a failure.
         let (mut ctx2, root2) = scratch_ctx(Family::Android16_6_12, "69", "2026-03");
@@ -3646,11 +2815,7 @@ kernel_build(
         fs::create_dir_all(built2.parent().unwrap()).unwrap();
         fs::write(&built2, "CONFIG_KSU_SUSFS=y\n").unwrap();
         verify_kernel_config(&mut ctx2);
-        assert!(
-            ctx2.notes.iter().any(|n| n.starts_with("WARNING:")),
-            "notes: {:?}",
-            ctx2.notes
-        );
+        assert!(ctx2.notes.iter().any(|n| n.starts_with("WARNING:")), "notes: {:?}", ctx2.notes);
 
         fs::remove_dir_all(root).ok();
         fs::remove_dir_all(root2).ok();
@@ -3660,12 +2825,7 @@ kernel_build(
     fn scratch_ctx(family: Family, sublevel: &str, os_patch_level: &str) -> (Ctx, PathBuf) {
         use std::sync::atomic::{AtomicUsize, Ordering};
         static SEQ: AtomicUsize = AtomicUsize::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "trustgki-test-{}-{}-{}",
-            std::process::id(),
-            sublevel,
-            SEQ.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = std::env::temp_dir().join(format!("trustgki-test-{}-{}-{}", std::process::id(), sublevel, SEQ.fetch_add(1, Ordering::Relaxed)));
         if root.exists() {
             fs::remove_dir_all(&root).unwrap();
         }
@@ -3674,7 +2834,7 @@ kernel_build(
             workspace: root.clone(),
             output_dir: root.join("out"),
             bazel_cache: root.join("bazel"),
-            brand_name: "Wild".to_string(),
+            brand_name: "TrustGKI".to_string(),
             variant: "Normal".to_string(),
             jobs: 1,
             bypass: false,
@@ -3686,12 +2846,7 @@ kernel_build(
             kernel_patches_commit: None,
             anykernel3_commit: None,
         };
-        let ctx = Ctx::new(
-            opts,
-            family,
-            sublevel.to_string(),
-            os_patch_level.to_string(),
-        );
+        let ctx = Ctx::new(opts, family, sublevel.to_string(), os_patch_level.to_string());
         (ctx, root)
     }
 
@@ -3701,22 +2856,14 @@ kernel_build(
         ctx.sublevel = "69".to_string();
         let exec = ctx.common_dir().join("fs/exec.c");
         let task_mmu = ctx.common_dir().join("fs/proc/task_mmu.c");
-        let exec_before =
-            "#include <linux/fs.h>\n#include <linux/dma-buf.h>\n#include <linux/mm.h>\n";
-        let mmu_before =
-            "static void show_smap(struct seq_file *m, void *v)\n{\n\tvma_data_pages(vma);\n}\n";
+        let exec_before = "#include <linux/fs.h>\n#include <linux/dma-buf.h>\n#include <linux/mm.h>\n";
+        let mmu_before = "static void show_smap(struct seq_file *m, void *v)\n{\n\tvma_data_pages(vma);\n}\n";
         fs::write(&exec, exec_before).unwrap();
         fs::write(&task_mmu, mmu_before).unwrap();
 
         apply_susfs_fake_patches(&ctx).unwrap();
-        assert_eq!(
-            read(&exec).unwrap(),
-            "#include <linux/fs.h>\n#include <linux/mm.h>\n"
-        );
-        assert_eq!(
-            read(&task_mmu).unwrap(),
-            "static void show_smap(struct seq_file *m, void *v)\n{\n\tvma_pages(vma);\n}\n"
-        );
+        assert_eq!(read(&exec).unwrap(), "#include <linux/fs.h>\n#include <linux/mm.h>\n");
+        assert_eq!(read(&task_mmu).unwrap(), "static void show_smap(struct seq_file *m, void *v)\n{\n\tvma_pages(vma);\n}\n");
 
         revert_susfs_fake_patches(&ctx).unwrap();
         let exec_after = read(&exec).unwrap();
@@ -3730,11 +2877,7 @@ kernel_build(
         let (ctx, root) = scratch_ctx(Family::Android16_6_12, "69", "2026-03");
         let defconfig = ctx.defconfig();
         fs::create_dir_all(defconfig.parent().unwrap()).unwrap();
-        fs::write(
-            &defconfig,
-            "# CONFIG_KALLSYMS_ALL is not set\nCONFIG_OVERLAY_FS=n\nCONFIG_UNRELATED=y\n",
-        )
-        .unwrap();
+        fs::write(&defconfig, "# CONFIG_KALLSYMS_ALL is not set\nCONFIG_OVERLAY_FS=n\nCONFIG_UNRELATED=y\n").unwrap();
         set_kernel_config(&ctx, CFG_MISC).unwrap();
         let out = read(&defconfig).unwrap();
         assert!(out.contains("CONFIG_KALLSYMS_ALL=y\n"));
@@ -3753,20 +2896,14 @@ kernel_build(
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "#!/bin/sh\necho old\n").unwrap();
         apply_kernel_branding(&ctx).unwrap();
-        assert_eq!(
-            read(&path).unwrap(),
-            "#!/bin/sh\necho \"6.12.69-android16-Wild\"\n"
-        );
+        assert_eq!(read(&path).unwrap(), "#!/bin/sh\necho \"6.12.69-android16-TrustGKI\"\n");
 
         let (legacy, root2) = scratch_ctx(Family::Android14_6_1, "157", "2025-12");
         let path2 = legacy.common_dir().join("scripts/setlocalversion");
         fs::create_dir_all(path2.parent().unwrap()).unwrap();
         fs::write(&path2, "#!/bin/sh\necho old\n").unwrap();
         apply_kernel_branding(&legacy).unwrap();
-        assert_eq!(
-            read(&path2).unwrap(),
-            "#!/bin/sh\necho \"-android14-Wild\"\n"
-        );
+        assert_eq!(read(&path2).unwrap(), "#!/bin/sh\necho \"-android14-TrustGKI\"\n");
         fs::remove_dir_all(root).ok();
         fs::remove_dir_all(root2).ok();
     }
