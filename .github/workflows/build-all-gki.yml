@@ -1,0 +1,214 @@
+name: Build All GKI
+
+# Builds every supported GKI family — GKI + LXC (Droidspaces-OSS) + KernelSU-Next
+# + SUSFS — with the Rust builder in `src/main.rs` on every push, and on demand.
+#
+# The matrix is produced by `trustgki families --json`, which mirrors
+# `Family::ALL` in `src/main.rs`, so this workflow cannot drift from the code.
+#
+# Manual runs may narrow the patch level (a `YYYY-MM` date), pin a sublevel, or
+# change the branding. Leaving the patch level empty (or `All`) builds each
+# family's `-lts` branch tip, which is one build per family.
+
+on:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+    inputs:
+      os_patch_level:
+        description: "Patch level date (YYYY-MM) or lts; empty/All = each family's -lts branch tip"
+        required: false
+        default: ""
+        type: string
+      sublevel:
+        description: "Kernel sublevel (use with a YYYY-MM patch level; empty = read from the tree)"
+        required: false
+        default: ""
+        type: string
+      brand_name:
+        description: "Kernel branding appended to the version string"
+        required: false
+        default: Wild
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel a kernel build that is already running; queue the next push.
+  group: build-all-gki-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve families
+    runs-on: ubuntu-latest
+    outputs:
+      families: ${{ steps.matrix.outputs.families }}
+      patch_level: ${{ steps.matrix.outputs.patch_level }}
+      sublevel: ${{ steps.matrix.outputs.sublevel }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve supported families
+        id: matrix
+        shell: bash
+        env:
+          INPUT_PATCH_LEVEL: ${{ inputs.os_patch_level }}
+          INPUT_SUBLEVEL: ${{ inputs.sublevel }}
+        run: |
+          set -euo pipefail
+
+          # Single source of truth for the build matrix (src/main.rs: Family::ALL).
+          FAMILIES="$(cargo run --quiet --release -- families --json)"
+          echo "families=${FAMILIES}" >> "$GITHUB_OUTPUT"
+
+          # Empty, All or lts all mean "each family's -lts branch tip".
+          PATCH_LEVEL="${INPUT_PATCH_LEVEL}"
+          case "${PATCH_LEVEL}" in
+            ""|All|all|lts|LTS) PATCH_LEVEL="";;
+          esac
+          echo "patch_level=${PATCH_LEVEL}" >> "$GITHUB_OUTPUT"
+          echo "sublevel=${INPUT_SUBLEVEL}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Kernel build matrix"
+            echo
+            echo "- Families: \`${FAMILIES}\`"
+            if [ -n "${PATCH_LEVEL}" ]; then
+              echo "- Patch level: \`${PATCH_LEVEL}\`"
+            else
+              echo "- Patch level: each family's \`-lts\` branch tip"
+            fi
+            if [ -n "${INPUT_SUBLEVEL}" ]; then
+              echo "- Sublevel: \`${INPUT_SUBLEVEL}\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: ${{ matrix.family }}
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        family: ${{ fromJson(needs.resolve.outputs.families) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Free disk space
+        uses: endersonmenezes/free-disk-space@v4
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          # NOTE: no "*llvm*" here — the kernel build needs clang/LLVM.
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* mysql* dotnet-sdk-*"
+          remove_packages_one_command: true
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+          rm_cmd: "rmz"
+          rmz_version: "3.2.0"
+          testing: false
+
+      - name: Set up more swap (for LTO)
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 16
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            bc bison flex cpio rsync zip ccache \
+            libssl-dev libelf-dev libncurses-dev dwarves \
+            clang lld llvm
+          clang --version | head -n1
+          ccache --version | head -n1
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Build GKI image
+        shell: bash
+        env:
+          FAMILY: ${{ matrix.family }}
+          PATCH_LEVEL: ${{ needs.resolve.outputs.patch_level }}
+          SUBLEVEL: ${{ needs.resolve.outputs.sublevel }}
+          BRAND_NAME: ${{ inputs.brand_name || 'Wild' }}
+        run: |
+          set -euo pipefail
+
+          WORKSPACE="${GITHUB_WORKSPACE}/ws"
+          OUTPUT="${GITHUB_WORKSPACE}/out"
+          mkdir -p "${WORKSPACE}" "${OUTPUT}"
+
+          ARGS=(
+            build
+            --version "${FAMILY}"
+            --workspace "${WORKSPACE}"
+            --output-dir "${OUTPUT}"
+            --brand-name "${BRAND_NAME}"
+            --jobs "$(nproc)"
+          )
+          if [ -n "${PATCH_LEVEL}" ]; then
+            ARGS+=(--os-patch-level "${PATCH_LEVEL}")
+          fi
+          if [ -n "${SUBLEVEL}" ]; then
+            ARGS+=(--sublevel "${SUBLEVEL}")
+          fi
+
+          printf '==> cargo run --release -- %s\n' "${ARGS[*]}"
+          cargo run --release -- "${ARGS[@]}"
+
+      - name: Upload kernel artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.family }}-AnyKernel3
+          path: |
+            out/**
+            ws/AnyKernel3/Image
+          if-no-files-found: warn
+          compression-level: 9
+
+      - name: Upload patch rejects
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.family }}-Rejects
+          path: ws/patch-rejects/**
+          if-no-files-found: ignore
+          compression-level: 9
+
+      - name: Build summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          SUMMARY="$(ls -1 out/build-summary-*.md 2>/dev/null | head -n1 || true)"
+          if [ -n "${SUMMARY}" ] && [ -f "${SUMMARY}" ]; then
+            cat "${SUMMARY}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No build summary was produced for ${{ matrix.family }}." >> "$GITHUB_STEP_SUMMARY"
+          fi

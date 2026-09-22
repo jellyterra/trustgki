@@ -107,6 +107,8 @@ enum Command_ {
     Build(Box<BuildArgs>),
     /// Print the build targets a config file expands to (mirrors prepare.yml).
     List(ListArgs),
+    /// Print the kernel families this binary can build (mirrors `Family::ALL`).
+    Families(FamiliesArgs),
 }
 
 #[derive(Debug, Args)]
@@ -120,6 +122,13 @@ struct ListArgs {
     /// Filter: patch date (`YYYY-MM`), sublevel, `lts`, or `All`.
     #[arg(long, default_value = "All")]
     os_patch_level: String,
+}
+
+#[derive(Debug, Args)]
+struct FamiliesArgs {
+    /// Emit a JSON array, ready to be used as a GitHub Actions matrix.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -3138,6 +3147,17 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+        Command_::Families(args) => {
+            let ids: Vec<&str> = Family::ALL.iter().map(|family| family.id()).collect();
+            if args.json {
+                say(&serde_json::to_string(&ids)?);
+            } else {
+                for id in ids {
+                    say(id);
+                }
+            }
+            Ok(())
+        }
     }
 }
 
@@ -3343,6 +3363,32 @@ interface {\n  symbol_id: 0xc750a072\n}\n";
         let labeled = targets_from_config(config, "All", "Custom").unwrap();
         assert!(labeled.iter().all(|t| t.variant == "Custom"));
         assert_eq!(labeled.len(), 32);
+    }
+
+    #[test]
+    fn supported_families_match_the_workflow_matrix() {
+        let ids: Vec<&str> = Family::ALL.iter().map(|family| family.id()).collect();
+        assert_eq!(ids.len(), 7);
+        assert_eq!(
+            ids,
+            vec![
+                "android12-5.10",
+                "android13-5.10",
+                "android13-5.15",
+                "android14-5.15",
+                "android14-6.1",
+                "android15-6.6",
+                "android16-6.12",
+            ]
+        );
+        // Every supported family must have a config JSON to expand.
+        for family in Family::ALL {
+            assert!(
+                family.config_file().is_file(),
+                "missing {}",
+                family.config_file().display()
+            );
+        }
     }
 
     /// Build a throwaway workspace that looks enough like `kernel/common`.

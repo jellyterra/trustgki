@@ -66,6 +66,11 @@ cargo run --release -- build --config .github/config/android15-6.6.json
 The result is `AnyKernel3/Image` (packaged as `<name>-AnyKernel3.zip`) plus a
 build summary and `-metadata.json` in the output directory.
 
+`.github/workflows/build-all-gki.yml` runs exactly this on every push to `main`
+and `dev` (and on manual dispatch): a `resolve` job asks the binary for its
+supported families and fans out one build job per family, uploading
+`<family>-AnyKernel3` artifacts.
+
 ### What the program reproduces
 
 | Stage | Source action | Notes |

@@ -4,3 +4,17 @@ kernel-manifests/
 kernels/
 bbr/
 __pycache__/
+
+# trustgki build workspace (kernel sources, cloned helpers, caches, artifacts)
+kernel/
+kernel_patches/
+AnyKernel3/
+susfs4ksu/
+Droidspaces-OSS/
+git-repo/
+patch-rejects/
+out/
+ws/
+.ccache/
+.samsung-tx/
+ccache
